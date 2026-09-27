@@ -7,10 +7,10 @@
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="/"><span class="mark">🧠</span>LearnAI</a>
+  <a class="brand" href="/"><span class="mark"><i data-icon="spark"></i></span>LearnAI</a>
   <div class="user">
     <div style="text-align:right"><div class="name" id="topicTitleTop">Урок</div><div class="role">Загрузка…</div></div>
-    <a href="/" class="avatar" title="В каталог">←</a>
+    <a href="/" class="avatar" title="В каталог"><i data-icon="arrowleft"></i></a>
   </div>
 </header>
 
@@ -23,14 +23,14 @@
       <h1 id="topicTitle">Загрузка…</h1>
       <div id="theoryBody" class="body muted">ИИ-учитель готовит теорию…</div>
       <div id="theoryExtra"></div>
-      <div class="callout">💡 <b>Не понял тему?</b> Нажми «Голосовой помощник» внизу — спроси учителя что угодно по этой теме, он ответит голосом.</div>
+      <div class="callout"><i data-icon="lightbulb"></i> <b>Не понял тему?</b> Нажми «Голосовой помощник» внизу — спроси учителя что угодно по этой теме, он ответит голосом.</div>
     </div>
 
     <!-- task column -->
     <div>
       <div class="task-card">
         <div class="head">
-          <h3>✨ Задание от ИИ</h3>
+          <h3><i data-icon="sparkles"></i> Задание от ИИ</h3>
           <span class="level-pill" id="levelPill">Уровень: старт</span>
         </div>
         <div id="feedbackBox" class="feedback" style="display:none"></div>
@@ -39,7 +39,7 @@
           <div class="task-text" id="taskText">…</div>
         </div>
         <label for="answerInput">Твой ответ</label>
-        <textarea id="answerInput" rows="2" placeholder="Напиши ответ (или продиктуй через 🎙)"></textarea>
+        <textarea id="answerInput" rows="2" placeholder="Напиши ответ (или продиктуй через микрофон)"></textarea>
         <button class="btn primary" style="width:100%; margin-top:14px" id="submitBtn" onclick="submitAnswer()">Проверить</button>
         <p class="muted" id="status" style="margin-top:8px"></p>
       </div>
@@ -62,7 +62,7 @@
 <div class="modal-bg" id="voiceModal">
   <div class="modal">
         <div class="modal-head">
-          <h3>🎙 Спросить ИИ-учителя</h3>
+          <h3><i data-icon="mic"></i> Спросить ИИ-учителя</h3>
           <div style="display:flex; gap:8px; align-items:center">
             <button class="btn ghost small" id="soundBtn" onclick="toggleSound()" title="Звук">🔊</button>
             <button class="btn ghost small" onclick="testVoice()" title="Проверить звук">Проверить голос</button>
@@ -70,12 +70,12 @@
           </div>
         </div>
     <div class="messages" id="chatLog">
-      <div class="msg ai">Привет! Я твой ИИ-учитель. Спроси меня о чём угодно по теме «<span id="chatTopicName">…</span>» — голосом (кнопка 🎙) или текстом.</div>
+      <div class="msg ai">Привет! Я твой ИИ-учитель. Спроси меня о чём угодно по теме «<span id="chatTopicName">…</span>» — голосом (кнопка <i data-icon="mic"></i>) или текстом.</div>
     </div>
     <div class="input-row">
       <input id="chatInput" placeholder="Спросить что-нибудь…" onkeydown="if(event.key==='Enter')sendChat()">
       <button class="btn primary" onclick="sendChat()">→</button>
-      <button class="btn ghost" id="micBtn" onclick="toggleMic()" title="Говорить">🎙</button>
+      <button class="btn ghost" id="micBtn" onclick="toggleMic()" title="Говорить"><i data-icon="mic"></i></button>
     </div>
   </div>
 </div>
@@ -141,7 +141,7 @@ async function nextTurn(answer) {
     $('taskWrap').style.display = 'none';
     $('answerInput').style.display = 'none';
     document.querySelector('label[for=answerInput]').style.display = 'none';
-    $('status').textContent = '🎉 Отлично! Тема закреплена.';
+    $('status').textContent = 'Отлично! Тема закреплена.';
   }
   if (data.correct === true || data.correct === false) {
     chips.push({ ok: data.correct, n: attemptNum });
@@ -253,7 +253,7 @@ async function toggleMic() {
   recognizer = new SpeechSDK.SpeechRecognizer(sc, audioConfig);
   listening = true;
   $('micBtn').classList.add('listening');
-  showStatus('🎙 Слушаю… (нажми 🎙 ещё раз, чтобы остановить)');
+  showStatus('Слушаю… (нажми микрофон ещё раз, чтобы остановить)');
   recognizer.recognized = async (s, e) => {
     if (e.result.reason !== SpeechSDK.ResultReason.RecognizedSpeech || !e.result.text) return;
     const text = e.result.text;
@@ -304,5 +304,6 @@ async function sendChat(forced) {
 }
 loadTopic();
 </script>
+  <script src="/js/icons.js"></script>
 </body>
 </html>

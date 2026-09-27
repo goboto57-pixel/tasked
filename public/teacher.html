@@ -10,7 +10,7 @@
 <!-- login -->
 <div id="authBox" class="auth-page">
   <div class="auth-box">
-    <div class="mark-lg">🧠</div>
+    <div class="mark-lg"><i data-icon="spark"></i></div>
     <div class="brand-name">LEARNAI</div>
     <h1>Панель учителя</h1>
     <p class="sub">Управляйте адаптивными курсами</p>
@@ -27,19 +27,19 @@
 <!-- dashboard -->
 <div id="dash" style="display:none">
   <header class="topbar">
-    <a class="brand" href="/"><span class="mark">🧠</span>LearnAI</a>
+    <a class="brand" href="/"><span class="mark"><i data-icon="spark"></i></span>LearnAI</a>
     <div class="search"><input placeholder="Поиск по темам…" oninput="filterTable(this.value)"></div>
     <div class="user">
       <div style="text-align:right"><div class="name">Учитель</div><div class="role">Панель управления</div></div>
-      <button class="avatar" style="border:none;cursor:pointer" onclick="logout()" title="Выйти">⏻</button>
+      <button class="avatar" style="border:none;cursor:pointer" onclick="logout()" title="Выйти"><i data-icon="power"></i></button>
     </div>
   </header>
   <div class="layout">
     <aside class="sidebar">
       <div class="side-title">НАВИГАЦИЯ</div>
-      <button class="side-item active" onclick="showTab('topics', this)">📊 Мои темы</button>
-      <button class="side-item" onclick="showTab('students', this)">👥 Ученики</button>
-      <a class="side-item" href="/">🏠 Каталог для учеников</a>
+      <button class="side-item active" onclick="showTab('topics', this)"><i data-icon="barchart"></i> Мои темы</button>
+      <button class="side-item" onclick="showTab('students', this)"><i data-icon="users"></i> Ученики</button>
+      <a class="side-item" href="/"><i data-icon="home"></i> Каталог для учеников</a>
       <div class="stat-box" id="statBox">
         <h4>Ваша статистика</h4>
         <p class="muted" id="statLines">Загрузка…</p>
@@ -49,13 +49,13 @@
     <main class="main">
       <div id="tabTopics">
         <div class="stat-cards">
-          <div class="card"><div class="tile v">📚</div><div><div class="big" id="stTopics">0</div><div class="muted">всего тем</div></div></div>
-          <div class="card"><div class="tile g">👥</div><div><div class="big" id="stStudents">0</div><div class="muted">активных учеников</div></div></div>
+          <div class="card"><div class="tile v"><i data-icon="book"></i></div><div><div class="big" id="stTopics">0</div><div class="muted">всего тем</div></div></div>
+          <div class="card"><div class="tile g"><i data-icon="users"></i></div><div><div class="big" id="stStudents">0</div><div class="muted">активных учеников</div></div></div>
           <div class="card"><div class="tile a">✅</div><div><div class="big" id="stDone">0</div><div class="muted">заданий решено</div></div></div>
         </div>
 
         <div class="card" style="cursor:default; margin-bottom:22px">
-          <h3 style="font-size:16px">➕ Создать тему</h3>
+          <h3 style="font-size:16px"><i data-icon="plus"></i> Создать тему</h3>
           <div style="display:grid; grid-template-columns:1fr 2fr; gap:12px; margin-top:6px">
             <div>
               <label style="margin-top:8px">Название темы</label>
@@ -140,11 +140,12 @@ function renderTable(list) {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td><b></b></td><td>${cat}</td><td class="muted">${new Date(t.created_at).toLocaleDateString('ru')}</td>
       <td><span class="status-pill pub">Опубликовано</span></td>
-      <td><button class="icon-btn" title="Открыть" onclick="location.href='/lesson.html?topic=${t.id}'">✏️</button>
-          <button class="icon-btn del" title="Удалить" onclick="delTopic(${t.id})">🗑</button></td>`;
+      <td><button class="icon-btn" title="Открыть" onclick="location.href='/lesson.html?topic=${t.id}'"><i data-icon="pencil"></i></button>
+          <button class="icon-btn del" title="Удалить" onclick="delTopic(${t.id})"><i data-icon="trash"></i></button></td>`;
     tr.querySelector('b').textContent = t.title;
     tb.appendChild(tr);
   });
+  window.paintIcons && paintIcons(tb);
 }
 function filterTable(q) {
   renderTable(myTopics.filter(t => t.title.toLowerCase().includes(q.toLowerCase())));
@@ -188,5 +189,6 @@ async function loadProgress() {
 }
 checkAuth();
 </script>
+  <script src="/js/icons.js"></script>
 </body>
 </html>

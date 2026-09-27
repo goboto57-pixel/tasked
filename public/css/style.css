@@ -247,3 +247,22 @@ td { padding: 13px 16px; border-top: 1px solid var(--line); }
 .msg.me { background: var(--primary); color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; }
 .modal .input-row { padding: 14px 22px 18px; display: flex; gap: 10px; border-top: 1px solid var(--line); }
 #voiceStatus { position: fixed; right: 28px; bottom: 96px; z-index: 100; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 8px 14px; font-size: 13px; color: var(--muted); display: none; box-shadow: 0 8px 24px rgba(17,24,39,.12); }
+
+/* ---------- svg icons ---------- */
+i[data-icon] { display: inline-flex; align-items: center; justify-content: center; font-style: normal; line-height: 1; vertical-align: -0.15em; }
+i[data-icon] svg { width: 1em; height: 1em; }
+.brand .mark i { font-size: 19px; color: #fff; }
+.mark-lg i { font-size: 28px; color: #fff; }
+.side-item i { font-size: 17px; margin-right: 9px; }
+.side-item > i:first-child { margin-right: 9px; }
+.side-item .cnt { margin-left: auto; }
+.tile i { font-size: 21px; color: var(--primary); }
+.tile.g i { color: var(--green); } .tile.a i { color: var(--amber); } .tile.r i { color: var(--red); } .tile.v i { color: var(--primary); }
+.icon-btn i { font-size: 15px; }
+.avatar i { font-size: 17px; }
+.task-card h3 i, .attempts h4 i { color: var(--primary); font-size: 17px; margin-right: 4px; }
+.callout i { color: var(--amber); font-size: 16px; margin-right: 4px; vertical-align: -0.2em; }
+#micBtn i { font-size: 16px; }
+#voiceFab i { font-size: 0; }
+.stat-box h4 i { color: var(--primary); margin-right: 6px; }
+.side-item { justify-content: flex-start; }

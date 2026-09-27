@@ -7,7 +7,7 @@
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="/"><span class="mark">🧠</span>LearnAI</a>
+  <a class="brand" href="/"><span class="mark"><i data-icon="spark"></i></span>LearnAI</a>
   <div class="search"><input id="search" placeholder="Поиск курсов, тем, понятий…"></div>
   <div class="user">
     <div style="text-align:right"><div class="name">Ученик</div><div class="role">Главная</div></div>
@@ -18,10 +18,10 @@
 <div class="layout">
   <aside class="sidebar">
     <div class="side-title">КАТАЛОГ</div>
-    <button class="side-item active" onclick="filterCat('', this)">📚 Все темы <span class="cnt" id="cntAll">0</span></button>
+    <button class="side-item active" onclick="filterCat('', this)"><i data-icon="book"></i> Все темы <span class="cnt" id="cntAll">0</span></button>
     <div id="cats"></div>
     <div class="stat-box">
-      <h4>🎓 Как это работает</h4>
+      <h4><i data-icon="lightbulb"></i> Как это работает</h4>
       <p class="muted">ИИ даёт теорию и задания. Каждое новое задание подстраивается под твой предыдущий ответ. Не понял — спроси учителя голосом прямо на уроке.</p>
     </div>
   </aside>
@@ -39,7 +39,7 @@
 </div>
 
 <script>
-const EMOJI = ['📘','➗','⚛️','💻','🌍','🧪','🎨','📈','🗣','🧮'];
+const EMOJI = ['book','divide','atom','code','globe','flask','image','trending','chat','calculator'];
 let allTopics = [], currentCat = '';
 
 async function loadTopics() {
@@ -62,13 +62,14 @@ function render() {
     c.className = 'card';
     c.style.cursor = 'pointer';
     c.onclick = () => location.href = '/lesson.html?topic=' + t.id;
-    c.innerHTML = `<div class="head"><div class="tile">${EMOJI[i % EMOJI.length]}</div><span class="muted">${cat ? '🏷 ' + cat : 'Тема'}</span></div>
+    c.innerHTML = `<div class="head"><div class="tile" data-icon="${EMOJI[i % EMOJI.length]}"></div><span class="muted">${cat ? '<i data-icon="tag"></i> ' + cat : 'Тема'}</span></div>
       <h3></h3><p></p><div class="progress-track"><div class="progress-fill" style="width:0%"></div></div>
       <span class="btn" style="margin-top:6px">Начать →</span>`;
     c.querySelector('h3').textContent = t.title;
     c.querySelector('p').textContent = desc;
     grid.appendChild(c);
   });
+  window.paintIcons && paintIcons(grid);
 }
 document.getElementById('search').addEventListener('input', render);
 function filterCat(name, el) {
@@ -79,5 +80,6 @@ function filterCat(name, el) {
 }
 loadTopics();
 </script>
+  <script src="/js/icons.js"></script>
 </body>
 </html>
