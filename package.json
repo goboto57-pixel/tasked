@@ -1,0 +1,17 @@
+{
+  "name": "ai-teacher",
+  "version": "1.0.0",
+  "description": "AI tutor: adaptive theory & tasks, voice via Azure Speech, teacher dashboard",
+  "main": "server.js",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "pg": "^8.11.5"
+  }
+}

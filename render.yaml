@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: ai-teacher
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        sync: false        # строка подключения к бесплатной Postgres (Neon)
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: AZURE_SPEECH_KEY
+        sync: false
+      - key: AZURE_SPEECH_REGION
+        value: eastus
+      - key: AZURE_SPEECH_VOICE
+        value: ru-RU-SvetlanaNeural
+      - key: SESSION_SECRET
+        generateValue: true

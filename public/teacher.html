@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LearnAI — Панель учителя</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<!-- login -->
+<div id="authBox" class="auth-page">
+  <div class="auth-box">
+    <div class="mark-lg">🧠</div>
+    <div class="brand-name">LEARNAI</div>
+    <h1>Панель учителя</h1>
+    <p class="sub">Управляйте адаптивными курсами</p>
+    <label style="text-align:left">Email / Логин</label>
+    <input id="email" type="email" placeholder="teacher@learnai.ru">
+    <label style="text-align:left">Пароль</label>
+    <input id="password" type="password" placeholder="••••••••">
+    <button class="btn" onclick="auth('login')">Войти</button>
+    <a class="link" href="javascript:void(0)" onclick="auth('register')">Нет аккаунта? Зарегистрироваться</a>
+    <p id="authMsg" class="err" style="margin-top:10px"></p>
+  </div>
+</div>
+
+<!-- dashboard -->
+<div id="dash" style="display:none">
+  <header class="topbar">
+    <a class="brand" href="/"><span class="mark">🧠</span>LearnAI</a>
+    <div class="search"><input placeholder="Поиск по темам…" oninput="filterTable(this.value)"></div>
+    <div class="user">
+      <div style="text-align:right"><div class="name">Учитель</div><div class="role">Панель управления</div></div>
+      <button class="avatar" style="border:none;cursor:pointer" onclick="logout()" title="Выйти">⏻</button>
+    </div>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="side-title">НАВИГАЦИЯ</div>
+      <button class="side-item active" onclick="showTab('topics', this)">📊 Мои темы</button>
+      <button class="side-item" onclick="showTab('students', this)">👥 Ученики</button>
+      <a class="side-item" href="/">🏠 Каталог для учеников</a>
+      <div class="stat-box" id="statBox">
+        <h4>Ваша статистика</h4>
+        <p class="muted" id="statLines">Загрузка…</p>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div id="tabTopics">
+        <div class="stat-cards">
+          <div class="card"><div class="tile v">📚</div><div><div class="big" id="stTopics">0</div><div class="muted">всего тем</div></div></div>
+          <div class="card"><div class="tile g">👥</div><div><div class="big" id="stStudents">0</div><div class="muted">активных учеников</div></div></div>
+          <div class="card"><div class="tile a">✅</div><div><div class="big" id="stDone">0</div><div class="muted">заданий решено</div></div></div>
+        </div>
+
+        <div class="card" style="cursor:default; margin-bottom:22px">
+          <h3 style="font-size:16px">➕ Создать тему</h3>
+          <div style="display:grid; grid-template-columns:1fr 2fr; gap:12px; margin-top:6px">
+            <div>
+              <label style="margin-top:8px">Название темы</label>
+              <input id="newTitle" placeholder="Например: Квадратные уравнения">
+              <label>Категория</label>
+              <select id="newCat">
+                <option value="">Без категории</option>
+                <option>Точные науки</option><option>Гуманитарные</option>
+                <option>Языки</option><option>IT и Код</option>
+              </select>
+            </div>
+            <div>
+              <label style="margin-top:8px">Описание / программа (необязательно)</label>
+              <textarea id="newDesc" rows="4" placeholder="Что изучить, класс, пожелания…"></textarea>
+              <button class="btn primary" style="margin-top:12px" onclick="createTopic()">Создать тему</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="cursor:default; padding:0; overflow:hidden">
+          <table id="topicsTable">
+            <thead><tr><th>Название темы</th><th>Категория</th><th>Дата создания</th><th>Статус</th><th>Действия</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="tabStudents" style="display:none">
+        <h2 class="section-title">Прогресс учеников</h2>
+        <div class="card" style="cursor:default; padding:0; overflow:hidden">
+          <table>
+            <thead><tr><th>Тема</th><th>Ученик</th><th>Заданий пройдено</th><th>Обновлено</th></tr></thead>
+            <tbody id="progBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+async function checkAuth() {
+  const r = await fetch('/api/auth/me');
+  const ok = r.ok;
+  document.getElementById('authBox').style.display = ok ? 'none' : 'flex';
+  document.getElementById('dash').style.display = ok ? 'block' : 'none';
+  if (ok) { loadMine(); loadProgress(); }
+}
+async function auth(mode) {
+  const r = await fetch('/api/auth/' + mode, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: document.getElementById('email').value.trim(),
+      password: document.getElementById('password').value
+    })
+  });
+  const data = await r.json();
+  if (data.error) { document.getElementById('authMsg').textContent = data.error; return; }
+  checkAuth();
+}
+async function logout() { await fetch('/api/auth/logout', { method: 'POST' }); location.reload(); }
+
+function showTab(name, el) {
+  document.getElementById('tabTopics').style.display = name === 'topics' ? 'block' : 'none';
+  document.getElementById('tabStudents').style.display = name === 'students' ? 'block' : 'none';
+  document.querySelectorAll('.side-item').forEach(x => x.classList.remove('active'));
+  el.classList.add('active');
+}
+
+let myTopics = [];
+async function loadMine() {
+  myTopics = await (await fetch('/api/topics')).json();
+  renderTable(myTopics);
+  document.getElementById('stTopics').textContent = myTopics.length;
+}
+function renderTable(list) {
+  const tb = document.querySelector('#topicsTable tbody');
+  tb.innerHTML = '';
+  if (!list.length) tb.innerHTML = '<tr><td colspan="5" class="muted" style="padding:24px">Тем пока нет — создайте первую выше</td></tr>';
+  list.forEach(t => {
+    const cat = (t.description.match(/^\[(.+?)\]/) || [])[1] || '—';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><b></b></td><td>${cat}</td><td class="muted">${new Date(t.created_at).toLocaleDateString('ru')}</td>
+      <td><span class="status-pill pub">Опубликовано</span></td>
+      <td><button class="icon-btn" title="Открыть" onclick="location.href='/lesson.html?topic=${t.id}'">✏️</button>
+          <button class="icon-btn del" title="Удалить" onclick="delTopic(${t.id})">🗑</button></td>`;
+    tr.querySelector('b').textContent = t.title;
+    tb.appendChild(tr);
+  });
+}
+function filterTable(q) {
+  renderTable(myTopics.filter(t => t.title.toLowerCase().includes(q.toLowerCase())));
+}
+async function createTopic() {
+  const title = document.getElementById('newTitle').value.trim();
+  if (!title) return;
+  const cat = document.getElementById('newCat').value;
+  const desc = (cat ? '[' + cat + '] ' : '') + document.getElementById('newDesc').value.trim();
+  await fetch('/api/topics', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, description: desc })
+  });
+  document.getElementById('newTitle').value = '';
+  document.getElementById('newDesc').value = '';
+  loadMine();
+}
+async function delTopic(id) {
+  if (!confirm('Удалить тему?')) return;
+  await fetch('/api/topics/' + id, { method: 'DELETE' });
+  loadMine();
+}
+async function loadProgress() {
+  const rows = await (await fetch('/api/teacher/progress')).json();
+  const tb = document.getElementById('progBody');
+  tb.innerHTML = '';
+  if (!rows.length) tb.innerHTML = '<tr><td colspan="4" class="muted" style="padding:24px">Пока никто не начал обучение</td></tr>';
+  const students = new Set(); let done = 0;
+  rows.forEach(p => {
+    students.add(p.student_key); done += p.score;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><b></b></td><td class="muted"></td><td>${p.score}</td><td class="muted">${new Date(p.updated_at).toLocaleString('ru')}</td>`;
+    tr.children[0].textContent = p.title;
+    tr.children[1].textContent = p.student_key;
+    tb.appendChild(tr);
+  });
+  document.getElementById('stStudents').textContent = students.size;
+  document.getElementById('stDone').textContent = done;
+  document.getElementById('statLines').textContent =
+    `${myTopics.length} тем · ${students.size} учеников · ${done} заданий решено`;
+}
+checkAuth();
+</script>
+</body>
+</html>
