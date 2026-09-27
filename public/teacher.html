@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LearnAI — Панель учителя</title>
+<title>Tasked — Панель учителя</title>
 <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
 <div id="authBox" class="auth-page">
   <div class="auth-box">
     <div class="mark-lg"><i data-icon="spark"></i></div>
-    <div class="brand-name">LEARNAI</div>
+    <div class="brand-name">TASKED</div>
     <h1>Панель учителя</h1>
     <p class="sub">Управляйте адаптивными курсами</p>
     <label style="text-align:left">Email / Логин</label>
@@ -27,7 +27,7 @@
 <!-- dashboard -->
 <div id="dash" style="display:none">
   <header class="topbar">
-    <a class="brand" href="/"><span class="mark"><i data-icon="spark"></i></span>LearnAI</a>
+    <a class="brand" href="/"><span class="mark"><i data-icon="spark"></i></span>Tasked</a>
     <div class="search"><input placeholder="Поиск по темам…" oninput="filterTable(this.value)"></div>
     <div class="user">
       <div style="text-align:right"><div class="name">Учитель</div><div class="role">Панель управления</div></div>
@@ -54,9 +54,9 @@
           <div class="card"><div class="tile a">✅</div><div><div class="big" id="stDone">0</div><div class="muted">заданий решено</div></div></div>
         </div>
 
-        <div class="card" style="cursor:default; margin-bottom:22px">
+        <div class="card create-card" style="cursor:default; margin-bottom:22px">
           <h3 style="font-size:16px"><i data-icon="plus"></i> Создать тему</h3>
-          <div style="display:grid; grid-template-columns:1fr 2fr; gap:12px; margin-top:6px">
+          <div class="create-grid" style="display:grid; grid-template-columns:1fr 2fr; gap:12px; margin-top:6px">
             <div>
               <label style="margin-top:8px">Название темы</label>
               <input id="newTitle" placeholder="Например: Квадратные уравнения">
@@ -75,7 +75,7 @@
           </div>
         </div>
 
-        <div class="card" style="cursor:default; padding:0; overflow:hidden">
+        <div class="card table-wrap" style="cursor:default; padding:0; overflow:hidden">
           <table id="topicsTable">
             <thead><tr><th>Название темы</th><th>Категория</th><th>Дата создания</th><th>Статус</th><th>Действия</th></tr></thead>
             <tbody></tbody>
@@ -85,7 +85,7 @@
 
       <div id="tabStudents" style="display:none">
         <h2 class="section-title">Прогресс учеников</h2>
-        <div class="card" style="cursor:default; padding:0; overflow:hidden">
+        <div class="card table-wrap" style="cursor:default; padding:0; overflow:hidden">
           <table>
             <thead><tr><th>Тема</th><th>Ученик</th><th>Заданий пройдено</th><th>Обновлено</th></tr></thead>
             <tbody id="progBody"></tbody>

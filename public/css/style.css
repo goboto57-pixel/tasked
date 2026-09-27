@@ -266,3 +266,59 @@ i[data-icon] svg { width: 1em; height: 1em; }
 #voiceFab i { font-size: 0; }
 .stat-box h4 i { color: var(--primary); margin-right: 6px; }
 .side-item { justify-content: flex-start; }
+
+/* ---------- mobile ---------- */
+.table-wrap { overflow-x: auto; }
+
+@media (max-width: 860px) {
+  .layout { flex-direction: column; }
+  .sidebar {
+    width: 100%; flex-direction: row; align-items: center; gap: 8px;
+    padding: 10px 12px; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--line);
+    -webkit-overflow-scrolling: touch;
+  }
+  .sidebar .side-title { display: none; }
+  .side-item { flex: none; padding: 8px 12px; background: #f4f5f9; border-radius: 999px; }
+  .side-item.active { background: var(--violet-soft); }
+  .side-item .cnt { margin-left: 6px; }
+  .stat-box { margin-top: 0; flex: none; min-width: 260px; padding: 12px 16px; }
+  .stat-box .muted { display: none; }
+  .main { padding: 16px 14px 90px; }
+
+  .topbar { padding: 10px 14px; gap: 12px; height: auto; flex-wrap: wrap; }
+  .topbar .search { order: 3; flex-basis: 100%; max-width: none; }
+  .topbar .search input { padding: 9px 12px 9px 36px; }
+  .user .name, .user .role { display: none; }
+
+  .hero { padding: 26px 22px; border-radius: 18px; margin-bottom: 20px; }
+  .hero h1 { font-size: 23px; }
+  .hero p { font-size: 14px; }
+  .section-title { font-size: 17px; }
+
+  .grid { grid-template-columns: 1fr; gap: 14px; }
+  .stat-cards { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .stat-cards .card { flex-direction: column; align-items: flex-start; gap: 8px; padding: 16px; }
+
+  .theory-card { padding: 20px 18px; }
+  .theory-card h1 { font-size: 21px; }
+  .lesson-grid { grid-template-columns: 1fr; gap: 14px; }
+
+  .auth-box { width: 100%; max-width: 400px; margin: 16px; padding: 28px 22px; }
+  .auth-page { padding: 12px; }
+
+  .card { padding: 16px; }
+  table { font-size: 13px; min-width: 560px; }
+
+  #voiceFab { right: 14px; bottom: 14px; height: 50px; padding: 0 16px; font-size: 13.5px; }
+  .modal { border-radius: 18px; max-height: 92vh; }
+  .modal .input-row { padding: 10px 14px 14px; }
+  #voiceStatus { right: 14px; bottom: 76px; left: 14px; text-align: center; }
+}
+
+@media (max-width: 420px) {
+  .stat-cards { grid-template-columns: 1fr; }
+  .hero h1 { font-size: 20px; }
+}
+@media (max-width: 860px) {
+  .create-grid { grid-template-columns: 1fr !important; }
+}
