@@ -8,43 +8,140 @@
 <body>
 <header class="topbar">
   <a class="brand" href="/"><span class="mark"><i data-icon="spark"></i></span>Tasked</a>
-  <div class="search"><input id="search" placeholder="Поиск курсов, тем, понятий…"></div>
+  <div class="search"><span class="s-icon"><i data-icon="search"></i></span><input id="search" data-i18n-ph="searchPh" placeholder="Поиск тем…"></div>
+  <div class="lang-switch"><button data-lang="ru" onclick="setLang('ru')">RU</button><button data-lang="kk" onclick="setLang('kk')">KZ</button></div>
   <div class="user">
-    <div style="text-align:right"><div class="name">Ученик</div><div class="role">Главная</div></div>
-    <a href="/teacher.html" class="avatar" title="Дэшборд учителя">У</a>
+    <div style="text-align:right"><div class="name" id="userName">Гость</div><div class="role" id="userRole" data-i18n="home">Главная</div></div>
+    <button class="avatar" id="userBtn" onclick="onUserClick()" title="Аккаунт"><i data-icon="user"></i></button>
   </div>
 </header>
 
 <div class="layout">
   <aside class="sidebar">
-    <div class="side-title">КАТАЛОГ</div>
-    <button class="side-item active" onclick="filterCat('', this)"><i data-icon="book"></i> Все темы <span class="cnt" id="cntAll">0</span></button>
+    <div class="side-title" data-i18n="catalog">Каталог</div>
+    <button class="side-item active" onclick="filterCat('', this)"><span style="display:flex;align-items:center;gap:10px"><i data-icon="book"></i><span data-i18n="allTopics">Все темы</span></span><span class="cnt" id="cntAll">0</span></button>
     <div id="cats"></div>
+    <a class="side-item" href="/teacher.html"><i data-icon="shield"></i><span data-i18n="teacherDash">Дэшборд учителя</span></a>
     <div class="stat-box">
-      <h4><i data-icon="lightbulb"></i> Как это работает</h4>
-      <p class="muted">ИИ даёт теорию и задания. Каждое новое задание подстраивается под твой предыдущий ответ. Не понял — спроси учителя голосом прямо на уроке.</p>
+      <h4><i data-icon="lightbulb"></i><span data-i18n="howItWorks">Как это работает</span></h4>
+      <p class="muted" data-i18n="howP">ИИ даёт теорию и задания. Каждое новое задание подстраивается под предыдущий ответ.</p>
     </div>
   </aside>
 
   <main class="main">
     <div class="hero">
-      <span class="chip">Персонализация на базе ИИ</span>
-      <h1>Учитесь умнее, а не дольше</h1>
-      <p>Наша система адаптирует сложность задач, теорию и темп обучения под ваши ответы в реальном времени. Начните любую тему ниже.</p>
+      <span class="chip" data-i18n="heroChip">Персонализация на базе ИИ</span>
+      <h1 data-i18n="heroH">Учитесь умнее, а не дольше</h1>
+      <p data-i18n="heroP">Система подстраивает теорию, сложность и темп под ваши ответы в реальном времени. Выберите тему ниже.</p>
     </div>
-    <h2 class="section-title">Все темы</h2>
+    <h2 class="section-title" data-i18n="allTopics">Все темы</h2>
     <div id="topics" class="grid"></div>
-    <p id="empty" class="muted" style="display:none; padding:30px 0">Пока нет тем — их создаёт учитель в <a href="/teacher.html">дэшборде</a>.</p>
+    <p id="empty" class="muted" style="display:none; padding:30px 0" data-i18n="empty">Пока нет тем — их создаёт учитель в дэшборде.</p>
   </main>
 </div>
 
+<!-- language gate -->
+<div id="langGate">
+  <div class="box">
+    <div class="mark-lg" style="width:52px;height:52px;border-radius:14px;margin:0 auto;background:var(--primary);display:flex;align-items:center;justify-content:center;color:#fff;font-size:24px"><i data-icon="globe"></i></div>
+    <h1 data-i18n="gateTitle">Тілді таңдаңыз / Выберите язык</h1>
+    <p data-i18n="gateSub">Интерфейс, озвучка и распознавание речи будут на выбранном языке.</p>
+    <div class="lang-pick">
+      <button onclick="setLang('kk')">Қазақша<small>казахский · kk-KZ</small></button>
+      <button onclick="setLang('ru')">Русский<small>русский · ru-RU</small></button>
+    </div>
+  </div>
+</div>
+
+<!-- student auth modal -->
+<div class="modal-bg" id="authModal">
+  <div class="modal" style="width:420px">
+    <div class="modal-head">
+      <h3><i data-icon="user"></i><span id="authTitle">Вход ученика</span></h3>
+      <button class="btn ghost small" onclick="closeAuth()" data-i18n="close">Закрыть</button>
+    </div>
+    <div style="padding:20px 22px">
+      <div class="auth-tabs">
+        <button id="tabLogin" class="active" onclick="authTab('login')">Вход</button>
+        <button id="tabReg" onclick="authTab('register')">Регистрация</button>
+      </div>
+      <label>Логин</label>
+      <input id="sLogin" placeholder="например: alikhan_01" autocomplete="username">
+      <div id="nameRow" style="display:none"><label>Имя (необязательно)</label><input id="sName" placeholder="Как к вам обращаться"></div>
+      <label>Пароль</label>
+      <input id="sPass" type="password" placeholder="от 4 символов" autocomplete="current-password">
+      <button class="btn primary" style="width:100%;margin-top:16px" id="authGo" onclick="doStudentAuth()">Войти</button>
+      <p id="authMsg" class="err" style="margin-top:10px;font-size:13px"></p>
+    </div>
+  </div>
+</div>
+
+<script src="/js/icons.js"></script>
+<script src="/js/i18n.js"></script>
 <script>
-const EMOJI = ['book','divide','atom','code','globe','flask','image','trending','chat','calculator'];
-let allTopics = [], currentCat = '';
+const ICONS_CYCLE = ['book','divide','atom','code','globe','flask','image','trending','chat','calculator'];
+let allTopics = [], currentCat = '', authMode = 'login', me = null;
+
+async function loadMe() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (r.ok) {
+      me = await r.json();
+      document.getElementById('userName').textContent = me.login;
+      document.getElementById('userRole').textContent = me.role === 'student' ? 'Ученик' : me.role === 'admin' ? 'Создатель' : 'Учитель';
+      document.getElementById('userBtn').innerHTML = '<i data-icon="logout"></i>';
+      paintIcons(document);
+      return;
+    }
+  } catch (e) {}
+  me = null;
+  document.getElementById('userName').textContent = 'Гость';
+  document.getElementById('userBtn').innerHTML = '<i data-icon="user"></i>';
+  paintIcons(document);
+}
+async function onUserClick() {
+  if (me) { await fetch('/api/auth/logout', { method: 'POST' }); loadMe(); return; }
+  document.getElementById('authModal').style.display = 'flex';
+}
+function closeAuth() { document.getElementById('authModal').style.display = 'none'; }
+function authTab(m) {
+  authMode = m;
+  document.getElementById('tabLogin').classList.toggle('active', m === 'login');
+  document.getElementById('tabReg').classList.toggle('active', m === 'register');
+  document.getElementById('nameRow').style.display = m === 'register' ? 'block' : 'none';
+  document.getElementById('authGo').textContent = m === 'register' ? 'Создать аккаунт' : 'Войти';
+  document.getElementById('authTitle').textContent = m === 'register' ? 'Регистрация ученика' : 'Вход ученика';
+}
+async function doStudentAuth() {
+  const login = document.getElementById('sLogin').value.trim();
+  const password = document.getElementById('sPass').value;
+  const name = document.getElementById('sName').value.trim();
+  const url = authMode === 'register' ? '/api/auth/student/register' : '/api/auth/student/login';
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password, name }) });
+  const d = await r.json();
+  if (d.error) {
+    const map = { login_taken: 'Такой логин уже занят', bad_credentials: 'Неверный логин или пароль', password_too_short: 'Пароль — от 4 символов', login_taken_or_invalid: 'Логин: 3–32 символа (латиница, цифры, _ .)' };
+    document.getElementById('authMsg').textContent = map[d.error] || d.error;
+    return;
+  }
+  closeAuth(); loadMe();
+}
 
 async function loadTopics() {
   allTopics = await (await fetch('/api/topics')).json();
   document.getElementById('cntAll').textContent = allTopics.length;
+  const cats = [...new Set(allTopics.map(t => (t.description.match(/^\[(.+?)\]/) || [])[1]).filter(Boolean))];
+  const box = document.getElementById('cats');
+  box.innerHTML = '';
+  cats.forEach(c => {
+    const b = document.createElement('button');
+    b.className = 'side-item';
+    b.innerHTML = '<i data-icon="tag"></i><span></span>';
+    b.querySelector('span').textContent = c;
+    b.onclick = () => filterCat(c, b);
+    box.appendChild(b);
+  });
+  paintIcons(box);
   render();
 }
 function render() {
@@ -62,14 +159,15 @@ function render() {
     c.className = 'card';
     c.style.cursor = 'pointer';
     c.onclick = () => location.href = '/lesson.html?topic=' + t.id;
-    c.innerHTML = `<div class="head"><div class="tile" data-icon="${EMOJI[i % EMOJI.length]}"></div><span class="muted">${cat ? '<i data-icon="tag"></i> ' + cat : 'Тема'}</span></div>
-      <h3></h3><p></p><div class="progress-track"><div class="progress-fill" style="width:0%"></div></div>
-      <span class="btn" style="margin-top:6px">Начать →</span>`;
+    c.innerHTML = `<div class="head"><div class="tile"><i data-icon="${ICONS_CYCLE[i % ICONS_CYCLE.length]}"></i></div><span class="muted">${cat || ''}</span></div>
+      <h3></h3><p></p>
+      <span class="btn" style="margin-top:6px"><span data-i18n="start">Начать</span><i data-icon="arrowright"></i></span>`;
     c.querySelector('h3').textContent = t.title;
     c.querySelector('p').textContent = desc;
     grid.appendChild(c);
   });
-  window.paintIcons && paintIcons(grid);
+  paintIcons(grid);
+  if (window.i18n) i18n.apply(i18n.get() || 'ru');
 }
 document.getElementById('search').addEventListener('input', render);
 function filterCat(name, el) {
@@ -78,8 +176,7 @@ function filterCat(name, el) {
   el.classList.add('active');
   render();
 }
-loadTopics();
+loadMe(); loadTopics();
 </script>
-  <script src="/js/icons.js"></script>
 </body>
 </html>

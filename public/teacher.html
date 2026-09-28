@@ -10,17 +10,25 @@
 <!-- login -->
 <div id="authBox" class="auth-page">
   <div class="auth-box">
-    <div class="mark-lg"><i data-icon="spark"></i></div>
+    <div class="mark-lg"><i data-icon="shield"></i></div>
     <div class="brand-name">TASKED</div>
     <h1>Панель учителя</h1>
-    <p class="sub">Управляйте адаптивными курсами</p>
-    <label style="text-align:left">Email / Логин</label>
-    <input id="email" type="email" placeholder="teacher@learnai.ru">
-    <label style="text-align:left">Пароль</label>
-    <input id="password" type="password" placeholder="••••••••">
-    <button class="btn" onclick="auth('login')">Войти</button>
-    <a class="link" href="javascript:void(0)" onclick="auth('register')">Нет аккаунта? Зарегистрироваться</a>
-    <p id="authMsg" class="err" style="margin-top:10px"></p>
+    <p class="sub">Вход по логину и паролю. Ученикам — через каталог.</p>
+    <div class="auth-tabs">
+      <button id="tabT" class="active" onclick="roleTab('teacher')">Учитель</button>
+      <button id="tabA" onclick="roleTab('admin')">Создатель</button>
+    </div>
+    <div style="text-align:left">
+      <label>Логин</label>
+      <input id="login" placeholder="ваш логин">
+      <label>Пароль</label>
+      <input id="password" type="password" placeholder="пароль">
+    </div>
+    <button class="btn primary" onclick="doLogin()">Войти</button>
+    <div id="regRow">
+      <a class="link" href="javascript:void(0)" onclick="doRegister()">Нет аккаунта? Зарегистрироваться как учитель</a>
+    </div>
+    <p id="authMsg" class="err" style="margin-top:10px;font-size:13px"></p>
   </div>
 </div>
 
@@ -28,20 +36,21 @@
 <div id="dash" style="display:none">
   <header class="topbar">
     <a class="brand" href="/"><span class="mark"><i data-icon="spark"></i></span>Tasked</a>
-    <div class="search"><input placeholder="Поиск по темам…" oninput="filterTable(this.value)"></div>
+    <div class="search"><span class="s-icon"><i data-icon="search"></i></span><input placeholder="Поиск по темам…" oninput="filterTable(this.value)"></div>
     <div class="user">
-      <div style="text-align:right"><div class="name">Учитель</div><div class="role">Панель управления</div></div>
-      <button class="avatar" style="border:none;cursor:pointer" onclick="logout()" title="Выйти"><i data-icon="power"></i></button>
+      <div style="text-align:right"><div class="name" id="whoLogin">Учитель</div><div class="role" id="whoRole">Панель управления</div></div>
+      <button class="avatar" style="border:1px solid var(--line)" onclick="logout()" title="Выйти"><i data-icon="logout"></i></button>
     </div>
   </header>
   <div class="layout">
     <aside class="sidebar">
       <div class="side-title">НАВИГАЦИЯ</div>
-      <button class="side-item active" onclick="showTab('topics', this)"><i data-icon="barchart"></i> Мои темы</button>
-      <button class="side-item" onclick="showTab('students', this)"><i data-icon="users"></i> Ученики</button>
-      <a class="side-item" href="/"><i data-icon="home"></i> Каталог для учеников</a>
+      <button class="side-item active" onclick="showTab('topics', this)"><i data-icon="barchart"></i><span>Мои темы</span></button>
+      <button class="side-item" onclick="showTab('students', this)"><i data-icon="users"></i><span>Ученики</span></button>
+      <button class="side-item" id="navAdmin" style="display:none" onclick="showTab('admin', this)"><i data-icon="key"></i><span>Логины учителей</span></button>
+      <a class="side-item" href="/"><i data-icon="home"></i><span>Каталог</span></a>
       <div class="stat-box" id="statBox">
-        <h4>Ваша статистика</h4>
+        <h4>Статистика</h4>
         <p class="muted" id="statLines">Загрузка…</p>
       </div>
     </aside>
@@ -49,13 +58,13 @@
     <main class="main">
       <div id="tabTopics">
         <div class="stat-cards">
-          <div class="card"><div class="tile v"><i data-icon="book"></i></div><div><div class="big" id="stTopics">0</div><div class="muted">всего тем</div></div></div>
-          <div class="card"><div class="tile g"><i data-icon="users"></i></div><div><div class="big" id="stStudents">0</div><div class="muted">активных учеников</div></div></div>
-          <div class="card"><div class="tile a">✅</div><div><div class="big" id="stDone">0</div><div class="muted">заданий решено</div></div></div>
+          <div class="card"><div class="tile"><i data-icon="book"></i></div><div><div class="big" id="stTopics">0</div><div class="muted">всего тем</div></div></div>
+          <div class="card"><div class="tile"><i data-icon="users"></i></div><div><div class="big" id="stStudents">0</div><div class="muted">активных учеников</div></div></div>
+          <div class="card"><div class="tile"><i data-icon="checkcircle"></i></div><div><div class="big" id="stDone">0</div><div class="muted">заданий решено</div></div></div>
         </div>
 
-        <div class="card create-card" style="cursor:default; margin-bottom:22px">
-          <h3 style="font-size:16px"><i data-icon="plus"></i> Создать тему</h3>
+        <div class="card" style="cursor:default; margin-bottom:18px">
+          <h3 style="font-size:15px;display:flex;gap:8px;align-items:center"><i data-icon="plus"></i>Создать тему</h3>
           <div class="create-grid" style="display:grid; grid-template-columns:1fr 2fr; gap:12px; margin-top:6px">
             <div>
               <label style="margin-top:8px">Название темы</label>
@@ -70,7 +79,7 @@
             <div>
               <label style="margin-top:8px">Описание / программа (необязательно)</label>
               <textarea id="newDesc" rows="4" placeholder="Что изучить, класс, пожелания…"></textarea>
-              <button class="btn primary" style="margin-top:12px" onclick="createTopic()">Создать тему</button>
+              <button class="btn primary" style="margin-top:12px" onclick="createTopic()"><i data-icon="plus"></i>Создать тему</button>
             </div>
           </div>
         </div>
@@ -92,28 +101,80 @@
           </table>
         </div>
       </div>
+
+      <div id="tabAdmin" style="display:none">
+        <h2 class="section-title">Логины и доступы учителей</h2>
+        <p class="muted" style="margin-bottom:14px">Пароли хранятся в виде хэша и не показываются. Создавайте учителям логины с известным паролем здесь, при необходимости сбрасывайте пароль. Передайте учителю логин и пароль — он войдёт через эту же страницу.</p>
+        <div class="card" style="margin-bottom:18px">
+          <h3 style="font-size:15px;display:flex;gap:8px;align-items:center"><i data-icon="key"></i>Новый учитель</h3>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;margin-top:10px;align-items:end" class="create-grid">
+            <div><label>Логин</label><input id="ntLogin" placeholder="teacher01"></div>
+            <div><label>Пароль</label><input id="ntPass" placeholder="минимум 4 символа"></div>
+            <div><label>Email (необязательно)</label><input id="ntEmail" placeholder="teacher@school.kz"></div>
+            <div><button class="btn primary" onclick="createTeacher()">Создать</button></div>
+          </div>
+          <p id="ntMsg" class="err" style="margin-top:8px;font-size:13px"></p>
+        </div>
+        <div class="card table-wrap" style="padding:0;overflow:hidden">
+          <table>
+            <thead><tr><th>Логин</th><th>Email</th><th>Тем / учеников</th><th>Создан</th><th>Новый пароль</th><th></th></tr></thead>
+            <tbody id="adminBody"></tbody>
+          </table>
+        </div>
+      </div>
     </main>
   </div>
 </div>
 
+<script src="/js/icons.js"></script>
 <script>
+let me = null, authRole = 'teacher';
+
+function roleTab(r) {
+  authRole = r;
+  document.getElementById('tabT').classList.toggle('active', r === 'teacher');
+  document.getElementById('tabA').classList.toggle('active', r === 'admin');
+  document.getElementById('regRow').style.display = r === 'teacher' ? 'block' : 'none';
+  if (r === 'admin') document.getElementById('login').placeholder = 'pyfold';
+}
+
 async function checkAuth() {
   const r = await fetch('/api/auth/me');
-  const ok = r.ok;
-  document.getElementById('authBox').style.display = ok ? 'none' : 'flex';
-  document.getElementById('dash').style.display = ok ? 'block' : 'none';
-  if (ok) { loadMine(); loadProgress(); }
+  if (!r.ok) {
+    document.getElementById('authBox').style.display = 'flex';
+    document.getElementById('dash').style.display = 'none';
+    return;
+  }
+  me = await r.json();
+  if (me.role === 'student') { await fetch('/api/auth/logout', { method: 'POST' }); location.reload(); return; }
+  document.getElementById('authBox').style.display = 'none';
+  document.getElementById('dash').style.display = 'block';
+  document.getElementById('whoLogin').textContent = me.login;
+  document.getElementById('whoRole').textContent = me.role === 'admin' ? 'Создатель' : 'Учитель';
+  if (me.role === 'admin') document.getElementById('navAdmin').style.display = 'flex';
+  loadMine(); loadProgress();
+  if (me.role === 'admin') loadAdmin();
 }
-async function auth(mode) {
-  const r = await fetch('/api/auth/' + mode, {
+async function doLogin() {
+  const login = document.getElementById('login').value.trim();
+  const password = document.getElementById('password').value;
+  const r = await fetch('/api/auth/teacher/login', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      email: document.getElementById('email').value.trim(),
-      password: document.getElementById('password').value
-    })
+    body: JSON.stringify({ login, password })
   });
-  const data = await r.json();
-  if (data.error) { document.getElementById('authMsg').textContent = data.error; return; }
+  const d = await r.json();
+  if (d.error) { document.getElementById('authMsg').textContent = 'Неверный логин или пароль'; return; }
+  checkAuth();
+}
+async function doRegister() {
+  const login = document.getElementById('login').value.trim().toLowerCase();
+  const password = document.getElementById('password').value;
+  const r = await fetch('/api/auth/teacher/register', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login, password })
+  });
+  const d = await r.json();
+  if (d.error) { document.getElementById('authMsg').textContent = d.error === 'login_taken' ? 'Такой логин уже занят' : 'Логин: 3–32 символа (латиница, цифры, _ .)'; return; }
   checkAuth();
 }
 async function logout() { await fetch('/api/auth/logout', { method: 'POST' }); location.reload(); }
@@ -121,6 +182,7 @@ async function logout() { await fetch('/api/auth/logout', { method: 'POST' }); l
 function showTab(name, el) {
   document.getElementById('tabTopics').style.display = name === 'topics' ? 'block' : 'none';
   document.getElementById('tabStudents').style.display = name === 'students' ? 'block' : 'none';
+  document.getElementById('tabAdmin').style.display = name === 'admin' ? 'block' : 'none';
   document.querySelectorAll('.side-item').forEach(x => x.classList.remove('active'));
   el.classList.add('active');
 }
@@ -139,26 +201,23 @@ function renderTable(list) {
     const cat = (t.description.match(/^\[(.+?)\]/) || [])[1] || '—';
     const tr = document.createElement('tr');
     tr.innerHTML = `<td><b></b></td><td>${cat}</td><td class="muted">${new Date(t.created_at).toLocaleDateString('ru')}</td>
-      <td><span class="status-pill pub">Опубликовано</span></td>
-      <td><button class="icon-btn" title="Открыть" onclick="location.href='/lesson.html?topic=${t.id}'"><i data-icon="pencil"></i></button>
-          <button class="icon-btn del" title="Удалить" onclick="delTopic(${t.id})"><i data-icon="trash"></i></button></td>`;
+      <td><span class="status-pill">Опубликовано</span></td>
+      <td><button class="icon-btn" title="Открыть"><i data-icon="pencil"></i></button>
+          <button class="icon-btn del" title="Удалить"><i data-icon="trash"></i></button></td>`;
     tr.querySelector('b').textContent = t.title;
+    tr.querySelectorAll('button')[0].onclick = () => location.href = '/lesson.html?topic=' + t.id;
+    tr.querySelectorAll('button')[1].onclick = () => delTopic(t.id);
     tb.appendChild(tr);
   });
-  window.paintIcons && paintIcons(tb);
+  paintIcons(tb);
 }
-function filterTable(q) {
-  renderTable(myTopics.filter(t => t.title.toLowerCase().includes(q.toLowerCase())));
-}
+function filterTable(q) { renderTable(myTopics.filter(t => t.title.toLowerCase().includes(q.toLowerCase()))); }
 async function createTopic() {
   const title = document.getElementById('newTitle').value.trim();
   if (!title) return;
   const cat = document.getElementById('newCat').value;
   const desc = (cat ? '[' + cat + '] ' : '') + document.getElementById('newDesc').value.trim();
-  await fetch('/api/topics', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, description: desc })
-  });
+  await fetch('/api/topics', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, description: desc }) });
   document.getElementById('newTitle').value = '';
   document.getElementById('newDesc').value = '';
   loadMine();
@@ -177,18 +236,60 @@ async function loadProgress() {
   rows.forEach(p => {
     students.add(p.student_key); done += p.score;
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td><b></b></td><td class="muted"></td><td>${p.score}</td><td class="muted">${new Date(p.updated_at).toLocaleString('ru')}</td>`;
-    tr.children[0].textContent = p.title;
-    tr.children[1].textContent = p.student_key;
+    const c0 = document.createElement('td'); c0.textContent = p.title;
+    const c1 = document.createElement('td'); c1.className = 'muted mono'; c1.textContent = p.student_key;
+    const c2 = document.createElement('td'); c2.textContent = p.score;
+    const c3 = document.createElement('td'); c3.className = 'muted'; c3.textContent = new Date(p.updated_at).toLocaleString('ru');
+    tr.append(c0, c1, c2, c3);
     tb.appendChild(tr);
   });
   document.getElementById('stStudents').textContent = students.size;
   document.getElementById('stDone').textContent = done;
-  document.getElementById('statLines').textContent =
-    `${myTopics.length} тем · ${students.size} учеников · ${done} заданий решено`;
+  document.getElementById('statLines').textContent = `${myTopics.length} тем · ${students.size} учеников · ${done} заданий решено`;
+}
+
+// ---- admin ----
+async function loadAdmin() {
+  const rows = await (await fetch('/api/admin/teachers')).json();
+  const tb = document.getElementById('adminBody');
+  tb.innerHTML = '';
+  if (!rows.length) tb.innerHTML = '<tr><td colspan="6" class="muted" style="padding:24px">Учителей пока нет — создайте первого выше</td></tr>';
+  rows.forEach(t => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><b class="mono"></b></td><td class="muted"></td>
+      <td class="muted">${t.topics} / ${t.students}</td>
+      <td class="muted">${new Date(t.created_at).toLocaleDateString('ru')}</td>
+      <td><div style="display:flex;gap:6px"><input placeholder="новый пароль" style="max-width:150px"><button class="btn small">Ок</button></div></td>
+      <td><button class="icon-btn del" title="Удалить"><i data-icon="trash"></i></button></td>`;
+    tr.children[0].querySelector('b').textContent = t.login;
+    tr.children[1].textContent = t.email || '—';
+    const inp = tr.querySelector('input'), ok = tr.querySelector('.btn');
+    ok.onclick = async () => {
+      if (inp.value.length < 4) { alert('Пароль — от 4 символов'); return; }
+      await fetch('/api/admin/teachers/' + t.id + '/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: inp.value }) });
+      inp.value = ''; alert('Пароль обновлён. Передайте новый пароль учителю: ' + t.login);
+    };
+    tr.querySelector('.icon-btn').onclick = async () => {
+      if (!confirm('Удалить учителя ' + t.login + '? Его темы тоже удалятся.')) return;
+      await fetch('/api/admin/teachers/' + t.id, { method: 'DELETE' });
+      loadAdmin();
+    };
+    tb.appendChild(tr);
+  });
+  paintIcons(tb);
+}
+async function createTeacher() {
+  const login = document.getElementById('ntLogin').value.trim().toLowerCase();
+  const password = document.getElementById('ntPass').value;
+  const email = document.getElementById('ntEmail').value.trim() || undefined;
+  const r = await fetch('/api/admin/teachers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password, email }) });
+  const d = await r.json();
+  if (d.error) { document.getElementById('ntMsg').textContent = d.error === 'login_taken' ? 'Такой логин уже занят' : 'Логин: 3–32 символа (латиница, цифры, _ .)'; return; }
+  document.getElementById('ntMsg').textContent = '';
+  document.getElementById('ntLogin').value = ''; document.getElementById('ntPass').value = ''; document.getElementById('ntEmail').value = '';
+  loadAdmin();
 }
 checkAuth();
 </script>
-  <script src="/js/icons.js"></script>
 </body>
 </html>

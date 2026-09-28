@@ -8,29 +8,30 @@
 <body>
 <header class="topbar">
   <a class="brand" href="/"><span class="mark"><i data-icon="spark"></i></span>Tasked</a>
+  <div class="lang-switch"><button data-lang="ru" onclick="setLang('ru')">RU</button><button data-lang="kk" onclick="setLang('kk')">KZ</button></div>
   <div class="user">
-    <div style="text-align:right"><div class="name" id="topicTitleTop">Урок</div><div class="role">Загрузка…</div></div>
-    <a href="/" class="avatar" title="В каталог"><i data-icon="arrowleft"></i></a>
+    <div style="text-align:right"><div class="name" id="topicTitleTop">Урок</div><div class="role" id="sttLang">ru-RU</div></div>
+    <a href="/" class="avatar" data-i18n-title="backCatalog" title="В каталог"><i data-icon="arrowleft"></i></a>
   </div>
 </header>
 
 <div class="main">
   <div class="crumbs" id="crumbs"><b>Каталог</b> / …</div>
   <div class="lesson-grid">
-
-    <!-- theory -->
     <div class="theory-card">
       <h1 id="topicTitle">Загрузка…</h1>
       <div id="theoryBody" class="body muted">ИИ-учитель готовит теорию…</div>
-      <div id="theoryExtra"></div>
-      <div class="callout"><i data-icon="lightbulb"></i> <b>Не понял тему?</b> Нажми «Голосовой помощник» внизу — спроси учителя что угодно по этой теме, он ответит голосом.</div>
+      <div class="callout"><i data-icon="lightbulb"></i><span><b>Не понял тему?</b> Нажми «Голосовой помощник» внизу — спроси учителя что угодно, он ответит голосом.</span></div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn small" onclick="replayTheory()"><i data-icon="volume"></i><span>Озвучить</span></button>
+        <button class="btn small ghost" onclick="Voice.stopAll()"><i data-icon="volumex"></i><span>Стоп</span></button>
+      </div>
     </div>
 
-    <!-- task column -->
     <div>
       <div class="task-card">
         <div class="head">
-          <h3><i data-icon="sparkles"></i> Задание от ИИ</h3>
+          <h3><i data-icon="sparkles"></i><span data-i18n="task">Задание от ИИ</span></h3>
           <span class="level-pill" id="levelPill">Уровень: старт</span>
         </div>
         <div id="feedbackBox" class="feedback" style="display:none"></div>
@@ -38,119 +39,143 @@
           <div class="task-num" id="taskNum">ЗАДАЧА #1</div>
           <div class="task-text" id="taskText">…</div>
         </div>
-        <label for="answerInput">Твой ответ</label>
-        <textarea id="answerInput" rows="2" placeholder="Напиши ответ (или продиктуй через микрофон)"></textarea>
-        <button class="btn primary" style="width:100%; margin-top:14px" id="submitBtn" onclick="submitAnswer()">Проверить</button>
+        <label for="answerInput" data-i18n="yourAnswer">Твой ответ</label>
+        <textarea id="answerInput" rows="2" placeholder="Напиши ответ или продиктуй через микрофон"></textarea>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn primary" style="flex:1" id="submitBtn" onclick="submitAnswer()"><i data-icon="check"></i><span data-i18n="check">Проверить</span></button>
+          <button class="btn" id="dictBtn" onclick="dictateAnswer()" title="Продиктовать"><i data-icon="mic"></i></button>
+        </div>
         <p class="muted" id="status" style="margin-top:8px"></p>
       </div>
 
       <div class="attempts">
-        <h4>История попыток по этой теме:</h4>
+        <h4 data-i18n="attempts">История попыток</h4>
         <div class="chips" id="chips"><span class="muted">Пока пусто</span></div>
       </div>
     </div>
   </div>
 </div>
 
-<!-- floating voice assistant: ask the AI teacher about the topic -->
 <button id="voiceFab" onclick="openVoice()">
   <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
-  Голосовой помощник
+  <span data-i18n="voiceAsst">Голосовой помощник</span>
 </button>
 <div id="voiceStatus"></div>
 
 <div class="modal-bg" id="voiceModal">
   <div class="modal">
-        <div class="modal-head">
-          <h3><i data-icon="mic"></i> Спросить ИИ-учителя</h3>
-          <div style="display:flex; gap:8px; align-items:center">
-            <button class="btn ghost small" id="soundBtn" onclick="toggleSound()" title="Звук">🔊</button>
-            <button class="btn ghost small" onclick="testVoice()" title="Проверить звук">Проверить голос</button>
-            <button class="btn ghost small" onclick="closeVoice()">Закрыть</button>
-          </div>
-        </div>
+    <div class="modal-head">
+      <h3><i data-icon="mic"></i><span data-i18n="askTeacher">Спросить ИИ-учителя</span></h3>
+      <div style="display:flex; gap:8px; align-items:center">
+        <button class="btn ghost small" id="soundBtn" onclick="toggleSound()" title="Звук"><i data-icon="volume"></i></button>
+        <button class="btn ghost small" onclick="testVoice()" data-i18n="testVoice">Проверить голос</button>
+        <button class="btn ghost small" onclick="closeVoice()" data-i18n="close">Закрыть</button>
+      </div>
+    </div>
     <div class="messages" id="chatLog">
-      <div class="msg ai">Привет! Я твой ИИ-учитель. Спроси меня о чём угодно по теме «<span id="chatTopicName">…</span>» — голосом (кнопка <i data-icon="mic"></i>) или текстом.</div>
+      <div class="msg ai" id="greetMsg">Привет! Я твой ИИ-учитель. Спроси меня о чём угодно по теме — голосом или текстом.</div>
     </div>
     <div class="input-row">
-      <input id="chatInput" placeholder="Спросить что-нибудь…" onkeydown="if(event.key==='Enter')sendChat()">
-      <button class="btn primary" onclick="sendChat()">→</button>
+      <input id="chatInput" data-i18n-ph="askPh" placeholder="Спросить что-нибудь…" onkeydown="if(event.key==='Enter')sendChat()">
+      <button class="btn primary" onclick="sendChat()"><i data-icon="send"></i></button>
       <button class="btn ghost" id="micBtn" onclick="toggleMic()" title="Говорить"><i data-icon="mic"></i></button>
     </div>
   </div>
 </div>
 
+<div id="langGate">
+  <div class="box">
+    <div style="width:52px;height:52px;border-radius:14px;margin:0 auto;background:var(--primary);display:flex;align-items:center;justify-content:center;color:#fff;font-size:24px"><i data-icon="globe"></i></div>
+    <h1>Тілді таңдаңыз / Выберите язык</h1>
+    <p>Интерфейс, озвучка и распознавание речи будут на выбранном языке.</p>
+    <div class="lang-pick">
+      <button onclick="setLang('kk')">Қазақша<small>казахский · kk-KZ</small></button>
+      <button onclick="setLang('ru')">Русский<small>русский · ru-RU</small></button>
+    </div>
+  </div>
+</div>
+
 <script src="https://aka.ms/csspeech/jsbrowserpackageraw"></script>
+<script src="/js/icons.js"></script>
+<script src="/js/i18n.js"></script>
+<script src="/js/voice.js"></script>
 <script>
-const KEY = 'studentKey';
-let studentKey = localStorage.getItem(KEY);
-if (!studentKey) {
-  studentKey = 'student-' + Math.random().toString(36).slice(2, 10);
-  localStorage.setItem(KEY, studentKey);
-}
 const topicId = new URLSearchParams(location.search).get('topic');
 const $ = id => document.getElementById(id);
-let tasksDone = 0, attemptNum = 0, lastAnswer = null;
+let tasksDone = 0, attemptNum = 0, lastAnswer = null, soundOn = true, lastTheory = '', lastTask = '';
 const chips = [];
+
+function curLang() { return (window.i18n && i18n.get()) || 'ru'; }
+function studentKey() {
+  let k = localStorage.getItem('studentKey');
+  if (!k) { k = 'anon-' + Math.random().toString(36).slice(2, 10); localStorage.setItem('studentKey', k); }
+  return k;
+}
+function refreshLangLabel() {
+  $('sttLang').textContent = Voice.sttLang() + ' · Fish Audio';
+}
 
 // ---------------- lesson flow ----------------
 async function loadTopic() {
+  refreshLangLabel();
   const topics = await (await fetch('/api/topics')).json();
   const t = topics.find(x => x.id == topicId);
   if (!t) { $('topicTitle').textContent = 'Тема не найдена'; return; }
   $('topicTitle').textContent = t.title;
   $('topicTitleTop').textContent = t.title;
-  $('crumbs').innerHTML = `<b>Каталог</b> / ${t.title}`;
-  $('chatTopicName').textContent = t.title;
+  $('crumbs').innerHTML = '';
+  $('crumbs').append(Object.assign(document.createElement('b'), { textContent: 'Каталог' }), ' / ' + t.title);
   nextTurn(null);
 }
 
 async function nextTurn(answer) {
   lastAnswer = answer;
-  $('status').textContent = 'ИИ-учитель готовит урок… (обычно 5-15 секунд)';
+  $('status').textContent = curLang() === 'kk' ? 'ЖИ-мұғалім сабақ дайындауда…' : 'ИИ-учитель готовит урок…';
   $('submitBtn').disabled = true;
-  const r = await fetch('/api/ai/turn', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ topicId, studentKey, answer })
-  });
-  const data = await r.json();
-  $('submitBtn').disabled = false;
-  if (data.error) {
-    $('status').innerHTML = '⚠️ ' + data.error + ' — <a href="javascript:void(0)" onclick="nextTurn(lastAnswer)">Повторить</a>';
-    return;
+  try {
+    const r = await fetch('/api/ai/turn', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topicId, studentKey: studentKey(), answer, lang: curLang() })
+    });
+    const data = await r.json();
+    $('submitBtn').disabled = false;
+    if (data.error) { $('status').textContent = data.error; return; }
+    if (data.theory) {
+      lastTheory = data.theory;
+      $('theoryBody').textContent = data.theory;
+      $('theoryBody').classList.remove('muted');
+    }
+    if (data.feedback) {
+      const fb = $('feedbackBox');
+      fb.textContent = data.feedback;
+      fb.className = 'feedback ' + (data.correct === true ? 'good' : data.correct === false ? 'bad' : '');
+      fb.style.display = 'block';
+    }
+    if (data.task) {
+      attemptNum++;
+      lastTask = data.task;
+      $('taskNum').textContent = (curLang() === 'kk' ? 'ТАПСЫРМА #' : 'ЗАДАЧА #') + attemptNum;
+      $('taskText').textContent = data.task;
+      $('answerInput').value = '';
+      $('status').textContent = '';
+      if (soundOn) Voice.speak(data.task);
+    } else {
+      $('taskWrap').style.display = 'none';
+      $('answerInput').style.display = 'none';
+      $('status').textContent = curLang() === 'kk' ? 'Керемет! Тақырып меңгерілді.' : 'Отлично! Тема закреплена.';
+      if (soundOn && data.feedback) Voice.speak(data.feedback);
+    }
+    if (data.correct === true || data.correct === false) {
+      chips.push({ ok: data.correct, n: attemptNum });
+      $('chips').innerHTML = chips.map(c =>
+        `<span class="chip-a ${c.ok ? 'good' : 'bad'}">${c.ok ? '✓' : '✗'} ${c.n}</span>`).join('');
+      if (data.correct) tasksDone++;
+      $('levelPill').textContent = (curLang() === 'kk' ? 'Деңгей: ' : 'Уровень: ') + (tasksDone >= 4 ? 'высокий' : tasksDone >= 2 ? 'средний' : 'старт');
+    }
+  } catch (e) {
+    $('submitBtn').disabled = false;
+    $('status').textContent = 'Ошибка сети. Попробуйте ещё раз.';
   }
-
-  if (data.theory) {
-    $('theoryBody').textContent = data.theory;
-    $('theoryBody').classList.remove('muted');
-  }
-  if (data.feedback) {
-    const fb = $('feedbackBox');
-    fb.textContent = data.feedback;
-    fb.className = 'feedback ' + (data.correct === true ? 'good' : data.correct === false ? 'bad' : '');
-    fb.style.display = 'block';
-  }
-  if (data.task) {
-    attemptNum++;
-    $('taskNum').textContent = 'ЗАДАЧА #' + attemptNum;
-    $('taskText').textContent = data.task;
-    $('answerInput').value = '';
-    $('status').textContent = '';
-    $('answerInput').focus();
-  } else {
-    $('taskWrap').style.display = 'none';
-    $('answerInput').style.display = 'none';
-    document.querySelector('label[for=answerInput]').style.display = 'none';
-    $('status').textContent = 'Отлично! Тема закреплена.';
-  }
-  if (data.correct === true || data.correct === false) {
-    chips.push({ ok: data.correct, n: attemptNum });
-    $('chips').innerHTML = chips.map(c =>
-      `<span class="chip-a ${c.ok ? 'good' : 'bad'}">П${c.n} ${c.ok ? '✓' : '✗'}</span>`).join('');
-    if (data.correct) tasksDone++;
-    $('levelPill').textContent = 'Уровень: ' + (tasksDone >= 4 ? 'высокий' : tasksDone >= 2 ? 'средний' : 'старт');
-  }
-  if (data.task) speak(data.task);
 }
 
 async function submitAnswer() {
@@ -158,119 +183,71 @@ async function submitAnswer() {
   if (!a) return;
   nextTurn(a);
 }
+function replayTheory() { if (lastTask) Voice.speak(lastTask); else if (lastTheory) Voice.speak(lastTheory); }
 
-// ---------------- voice: Azure Speech, eastus ----------------
-let speechCfg = null, recognizer = null, synthesizer = null, listening = false, soundOn = true, audioUnlocked = false;
-const statusEl = $('voiceStatus');
-
-// browsers block audio until the user interacts with the page — unlock on first click
-function unlockAudio() {
-  if (audioUnlocked) return;
-  audioUnlocked = true;
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (Ctx) { window.__appAudioCtx = new Ctx(); window.__appAudioCtx.resume(); }
-  } catch (e) {}
-  try { speechSynthesis.getVoices(); } catch (e) {}
+// dictate answer via Azure STT in current language
+let recognizer = null, listening = false;
+function showStatus(t) { const el = $('voiceStatus'); el.textContent = t; el.style.display = t ? 'block' : 'none'; }
+async function dictateAnswer() {
+  const cfg = await (await fetch('/api/speech/config')).json();
+  if (!window.SpeechSDK || !cfg.key) { $('status').textContent = 'Распознавание недоступно: нет Azure-ключа'; return; }
+  if (listening) { try { recognizer.stopContinuousRecognitionAsync(); } catch (e) {} listening = false; return; }
+  const sc = SpeechSDK.SpeechConfig.fromSubscription(cfg.key, cfg.region);
+  sc.speechRecognitionLanguage = Voice.sttLang();
+  recognizer = new SpeechSDK.SpeechRecognizer(sc, SpeechSDK.AudioConfig.fromDefaultMicrophoneInput());
+  listening = true;
+  $('status').textContent = curLang() === 'kk' ? 'Тыңдап тұрмын… айтыңыз' : 'Слушаю… говорите';
+  recognizer.recognized = (s, e) => {
+    if (e.result.reason !== SpeechSDK.ResultReason.RecognizedSpeech || !e.result.text) return;
+    $('answerInput').value = e.result.text;
+    $('status').textContent = '';
+    recognizer.stopContinuousRecognitionAsync(); listening = false;
+  };
+  recognizer.startContinuousRecognitionAsync(() => {}, (err) => { listening = false; $('status').textContent = 'Ошибка микрофона'; });
 }
 
-async function initSpeech() {
-  if (speechCfg) return speechCfg;
-  speechCfg = await (await fetch('/api/speech/config')).json();
-  if (!speechCfg.key) statusEl.textContent = '⚠️ Azure Speech не настроен на сервере';
-  return speechCfg;
-}
-function showStatus(t) { statusEl.textContent = t; statusEl.style.display = t ? 'block' : 'none'; }
+// ---------------- voice chat ----------------
+let synthesizer = null;
 function toggleSound() {
   soundOn = !soundOn;
-  $('soundBtn').textContent = soundOn ? '🔊' : '🔇';
-  if (!soundOn) { try { speechSynthesis.cancel(); } catch (e) {} try { synthesizer && synthesizer.close(); } catch (e) {} }
-}
-
-// primary: browser built-in TTS (always works after a click); fallback: Azure
-let ruVoice = null;
-function pickVoice() {
-  const v = speechSynthesis.getVoices().filter(v => v.lang && v.lang.startsWith('ru'));
-  ruVoice = v.find(x => /Milena|Katya|Yuri|Google/i.test(x.name)) || v[0] || null;
-}
-if (typeof speechSynthesis !== 'undefined') {
-  pickVoice();
-  speechSynthesis.onvoiceschanged = pickVoice;
-}
-
-async function speak(text) {
-  if (!text || !soundOn) return;
-  unlockAudio();
-  const spoke = synthFallback(text);
-  if (!spoke) azureSpeak(text); // Azure only if built-in TTS is unavailable
+  $('soundBtn').innerHTML = `<i data-icon="${soundOn ? 'volume' : 'volumex'}"></i>`;
+  paintIcons($('soundBtn'));
+  if (!soundOn) Voice.stopAll();
 }
 function testVoice() {
-  unlockAudio();
-  pickVoice();
-  if (!synthFallback('Голос работает! Я твой ИИ-учитель.')) azureSpeak('Голос работает! Я твой ИИ-учитель.');
-  addMsg('ai', '🔊 Если ты слышишь эту фразу — звук настроен. Если нет: проверь громкость системы и то, что вкладка не заглушена (иконка рядом с адресом сайта).');
-}
-function azureSpeak(text) {
-  initSpeech().then(cfg => {
-    if (!window.SpeechSDK || !cfg.key) return;
-    const sc = SpeechSDK.SpeechConfig.fromSubscription(cfg.key, cfg.region);
-    sc.speechSynthesisVoiceName = cfg.voice || 'ru-RU-SvetlanaNeural';
-    synthesizer = new SpeechSDK.SpeechSynthesizer(sc, null);
-    synthesizer.speakTextAsync(text, () => {}, (e) => console.error('TTS:', e));
-  });
-}
-function synthFallback(text) { // returns true if the browser actually has a Russian voice
-  try {
-    if (typeof speechSynthesis === 'undefined') return false;
-    if (!ruVoice) pickVoice();
-    if (!ruVoice) return false;
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.voice = ruVoice; u.lang = 'ru-RU'; u.rate = 1;
-    speechSynthesis.speak(u);
-    return true;
-  } catch (e) { return false; }
-}
-function synthFallback(text) { // browser built-in TTS
-  try {
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'ru-RU'; speechSynthesis.speak(u);
-  } catch (e) {}
+  addMsg('ai', curLang() === 'kk'
+    ? 'Егер осы фразаны естісең — дыбыс бапталған. Fish Audio әйел дауысы.'
+    : 'Если слышишь эту фразу — звук настроен. Говорит женский голос Fish Audio.');
+  Voice.speak(curLang() === 'kk' ? 'Дауыс жұмыс істеп тұр! Мен сенің ЖИ-мұғаліміңмін.' : 'Голос работает! Я твой ИИ-учитель.');
 }
 
 async function toggleMic() {
-  unlockAudio();
-  const cfg = await initSpeech();
-  if (!window.SpeechSDK || !cfg.key) { showStatus('⚠️ Распознавание недоступно'); return; }
+  const cfg = await (await fetch('/api/speech/config')).json();
+  if (!window.SpeechSDK || !cfg.key) { showStatus('STT недоступно'); return; }
   if (listening) {
-    recognizer.stopContinuousRecognitionAsync(); listening = false;
-    $('micBtn').classList.remove('listening'); showStatus('');
+    try { recognizer.stopContinuousRecognitionAsync(); } catch (e) {}
+    listening = false; $('micBtn').classList.remove('listening'); showStatus('');
     return;
   }
   const sc = SpeechSDK.SpeechConfig.fromSubscription(cfg.key, cfg.region);
-  sc.speechRecognitionLanguage = 'ru-RU';
-  const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
-  recognizer = new SpeechSDK.SpeechRecognizer(sc, audioConfig);
+  sc.speechRecognitionLanguage = Voice.sttLang();
+  recognizer = new SpeechSDK.SpeechRecognizer(sc, SpeechSDK.AudioConfig.fromDefaultMicrophoneInput());
   listening = true;
   $('micBtn').classList.add('listening');
-  showStatus('Слушаю… (нажми микрофон ещё раз, чтобы остановить)');
+  showStatus(curLang() === 'kk' ? 'Тыңдап тұрмын… (тоқтату үшін басыңыз)' : 'Слушаю… (нажми ещё раз, чтобы остановить)');
   recognizer.recognized = async (s, e) => {
     if (e.result.reason !== SpeechSDK.ResultReason.RecognizedSpeech || !e.result.text) return;
-    const text = e.result.text;
-    showStatus(''); recognizer.stopContinuousRecognitionAsync(); listening = false;
-    $('micBtn').classList.remove('listening');
-    await sendChat(text);
+    showStatus('');
+    try { recognizer.stopContinuousRecognitionAsync(); } catch (err) {}
+    listening = false; $('micBtn').classList.remove('listening');
+    await sendChat(e.result.text);
   };
-  recognizer.startContinuousRecognitionAsync(
-    () => {},
-    (err) => {
-      listening = false; $('micBtn').classList.remove('listening');
-      showStatus('⚠️ Ошибка микрофона: ' + err);
-      console.error(err);
-    });
+  recognizer.startContinuousRecognitionAsync(() => {}, (err) => {
+    listening = false; $('micBtn').classList.remove('listening');
+    showStatus('Ошибка микрофона');
+  });
 }
 
-// ---------------- teacher chat about the topic ----------------
 const chatHistory = [];
 function addMsg(who, text) {
   const d = document.createElement('div');
@@ -279,31 +256,35 @@ function addMsg(who, text) {
   $('chatLog').appendChild(d);
   $('chatLog').scrollTop = $('chatLog').scrollHeight;
 }
-function openVoice() { unlockAudio(); $('voiceModal').style.display = 'flex'; $('chatInput').focus(); }
+function openVoice() { $('voiceModal').style.display = 'flex'; $('chatInput').focus(); }
 function closeVoice() { $('voiceModal').style.display = 'none'; }
 
 async function sendChat(forced) {
-  const q = (forced || $('chatInput').value).trim();
+  const q = String(forced !== undefined ? forced : $('chatInput').value).trim();
   if (!q) return;
   $('chatInput').value = '';
   addMsg('me', q);
   const thinking = document.createElement('div');
   thinking.className = 'msg ai'; thinking.textContent = '…';
   $('chatLog').appendChild(thinking);
-  $('chatLog').scrollTop = $('chatLog').scrollHeight;
   chatHistory.push({ role: 'student', text: q });
-  const r = await fetch('/api/ai/voice', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ topic: $('topicTitle').textContent, history: chatHistory.slice(-10) })
-  });
-  const data = await r.json();
-  thinking.textContent = data.reply || ('Ошибка: ' + (data.error || ''));
-  chatHistory.push({ role: 'teacher', text: data.reply || '' });
+  try {
+    const r = await fetch('/api/ai/voice', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: $('topicTitle').textContent, history: chatHistory.slice(-10), lang: curLang() })
+    });
+    const data = await r.json();
+    thinking.textContent = data.reply || ('Ошибка: ' + (data.error || ''));
+    chatHistory.push({ role: 'teacher', text: data.reply || '' });
+    if (soundOn && data.reply) Voice.speak(data.reply);
+  } catch (e) { thinking.textContent = 'Ошибка сети'; }
   $('chatLog').scrollTop = $('chatLog').scrollHeight;
-  speak(data.reply);
 }
+
+// re-render lesson when language changes after gate
+const _setLang = window.setLang;
+window.setLang = (l) => { _setLang(l); refreshLangLabel(); };
 loadTopic();
 </script>
-  <script src="/js/icons.js"></script>
 </body>
 </html>

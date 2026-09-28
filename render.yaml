@@ -10,11 +10,27 @@ services:
         sync: false        # строка подключения к бесплатной Postgres (Neon)
       - key: MISTRAL_API_KEY
         sync: false
+      - key: MISTRAL_MODEL
+        value: ministral-14b-latest
       - key: AZURE_SPEECH_KEY
         sync: false
       - key: AZURE_SPEECH_REGION
         value: eastus
       - key: AZURE_SPEECH_VOICE
         value: ru-RU-SvetlanaNeural
+      - key: AZURE_SPEECH_VOICE_KK
+        value: kk-KZ-AigulNeural
+      - key: FISH_API_KEY
+        sync: false        # fish.audio → API Keys (бесплатная модель s2.1-pro-free)
+      - key: FISH_MODEL
+        value: s2.1-pro-free
+      - key: FISH_VOICE_RU
+        value: e3ca0b027dc349539885834f450e35eb
+      - key: FISH_VOICE_KK
+        value: e3ca0b027dc349539885834f450e35eb
+      - key: ADMIN_LOGIN
+        value: pyfold
+      - key: ADMIN_PASSWORD
+        sync: false        # Hopedeke_725280 — задать в Environment
       - key: SESSION_SECRET
         generateValue: true
