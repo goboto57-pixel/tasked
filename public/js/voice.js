@@ -48,24 +48,27 @@
 
   function browserSpeak(text) {
     return new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => { if (!done) { done = true; resolve(v); } };
       try {
-        if (typeof speechSynthesis === 'undefined') return resolve(false);
+        if (typeof speechSynthesis === 'undefined') return finish(false);
         const target = lang() === 'kk' ? 'kk' : 'ru';
         const vs = speechSynthesis.getVoices();
         const match = vs.filter((v) => (v.lang || '').toLowerCase().startsWith(target))[0]
           || vs.filter((v) => (v.lang || '').toLowerCase().startsWith('ru'))[0];
-        if (!match && !vs.length) return resolve(false);
+        if (!match && !vs.length) return finish(false);
         speechSynthesis.cancel();
         const u = new SpeechSynthesisUtterance(text);
         if (match) { u.voice = match; u.lang = match.lang; }
         else u.lang = target === 'kk' ? 'kk-KZ' : 'ru-RU';
-        u.rate = 1;
-        u.onend = () => resolve(true);
-        u.onerror = () => resolve(false);
+        const sp = parseFloat(localStorage.getItem('tasked_speed') || '1') || 1;
+        u.rate = Math.min(2, Math.max(0.5, sp));
+        u.onend = () => finish(true);
+        u.onerror = () => finish(false);
         speechSynthesis.speak(u);
-        // safety: if no voices at all, resolve true anyway (no crash)
-        setTimeout(() => resolve(true), 300);
-      } catch (e) { resolve(false); }
+        // safety: some browsers never fire onend — treat started speech as ok
+        setTimeout(() => finish(true), 800);
+      } catch (e) { finish(false); }
     });
   }
 

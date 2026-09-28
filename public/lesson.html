@@ -98,7 +98,7 @@
       </div>
     </div>
     <div class="messages" id="chatLog">
-      <div class="msg ai" id="greetMsg">Привет! Я твой ИИ-учитель. Спроси меня о чём угодно по теме — голосом или текстом.</div>
+      <div class="msg ai" id="greetMsg" data-i18n="greet">Привет! Я твой ИИ-учитель. Спроси меня о чём угодно по теме — голосом или текстом.</div>
     </div>
     <div class="input-row">
       <input id="chatInput" data-i18n-ph="askPh" placeholder="Спросить что-нибудь…" onkeydown="if(event.key==='Enter')sendChat()">
@@ -112,8 +112,8 @@
   <div class="box">
     <img class="logo" src="/img/logo.svg" alt="tasked">
     <div style="font-weight:800;letter-spacing:3px;font-size:13px;color:var(--muted)">TASKED</div>
-    <h1>Тілді таңдаңыз / Выберите язык</h1>
-    <p>Интерфейс, озвучка и распознавание речи будут на выбранном языке.</p>
+    <h1 data-i18n="gateTitle">Тілді таңдаңыз / Выберите язык</h1>
+    <p data-i18n="gateSub">Интерфейс, озвучка и распознавание речи будут на выбранном языке.</p>
     <div class="lang-pick">
       <button onclick="setLang('kk')">Қазақша<small>казахский · kk-KZ</small></button>
       <button onclick="setLang('ru')">Русский<small>русский · ru-RU</small></button>
@@ -134,6 +134,7 @@ let curKind = 'text';
 const chips = [];
 
 function curLang() { return (window.i18n && i18n.get()) || 'ru'; }
+function tr(k) { return (window.i18n && i18n.t(k)) || k; }
 function studentKey() {
   let k = localStorage.getItem('studentKey');
   if (!k) { k = 'anon-' + Math.random().toString(36).slice(2, 10); localStorage.setItem('studentKey', k); }
@@ -141,6 +142,11 @@ function studentKey() {
 }
 function refreshLangLabel() {
   $('sttLang').textContent = Voice.sttLang() + ' · Fish Audio';
+}
+function renderChips() {
+  if (!chips.length) return;
+  $('chips').innerHTML = chips.map(c =>
+    `<span class="chip-a ${c.ok ? 'good' : 'bad'}">${c.ok ? tr('good') : tr('miss')} · ${c.n}</span>`).join('');
 }
 function paintStreak() {
   // consecutive correct answers at the end (backend finishes the lesson at 5)
@@ -166,9 +172,11 @@ async function loadTopic() {
   setStep(1);
   const topics = await (await fetch('/api/topics')).json();
   const t = topics.find(x => x.id == topicId);
-  if (!t) { $('topicTitle').textContent = 'Тема не найдена'; return; }
+  if (!t) { $('topicTitle').textContent = tr('topicMissing'); return; }
   $('topicTitle').textContent = t.title;
   $('topicTitleTop').textContent = t.title;
+  $('taskTitle').textContent = tr('taskFromAi');
+  $('levelPill').textContent = tr('lvl') + tr('lvlStart');
   try { localStorage.setItem('tasked_last', JSON.stringify({ id: t.id, title: t.title })); } catch (e) {}
   $('crumbs').innerHTML = '';
   $('crumbs').append(Object.assign(document.createElement('b'), { textContent: 'Каталог' }), ' / ' + t.title);
@@ -177,7 +185,7 @@ async function loadTopic() {
 
 async function nextTurn(answer) {
   lastAnswer = answer;
-  $('status').textContent = curLang() === 'kk' ? 'ЖИ-мұғалім сабақ дайындауда…' : 'ИИ-учитель готовит теорию и задание…';
+  $('status').textContent = tr('aiThinking');
   $('submitBtn').disabled = true;
   try {
     const r = await fetch('/api/ai/turn', {
@@ -186,7 +194,11 @@ async function nextTurn(answer) {
     });
     const data = await r.json();
     $('submitBtn').disabled = false;
-    if (data.error) { $('status').textContent = data.error; return; }
+    if (data.error) {
+      const map = { topic_not_found: tr('errTopic'), bad_request: tr('errTopic'), ai_error: tr('errAi') };
+      $('status').textContent = map[data.error] || (data.detail ? tr('errAi') : data.error);
+      return;
+    }
     if (data.theory) {
       lastTheory = data.theory;
       $('theoryBody').textContent = data.theory;
@@ -204,7 +216,7 @@ async function nextTurn(answer) {
       lastTask = data.task;
       renderOptions(data);
       $('stTaskN').textContent = '#' + attemptNum;
-      $('taskNum').textContent = (curLang() === 'kk' ? 'ТАПСЫРМА #' : 'ЗАДАЧА #') + attemptNum;
+      $('taskNum').textContent = tr('taskN') + attemptNum;
       $('taskText').textContent = data.task;
       $('answerInput').value = '';
       $('status').textContent = '';
@@ -213,21 +225,23 @@ async function nextTurn(answer) {
       setStep(3);
       $('taskWrap').style.display = 'none';
       $('answerInput').style.display = 'none';
+      $('answerLbl').style.display = 'none';
       $('optBox').style.display = 'none';
-      $('status').textContent = curLang() === 'kk' ? 'Керемет! Тақырып меңгерілді.' : 'Готово! Тема закреплена — так держать.';
+      $('submitBtn').style.display = 'none';
+      $('dictBtn').style.display = 'none';
+      $('status').textContent = tr('doneT');
       if (soundOn && data.feedback) Voice.speak(data.feedback);
     }
     if (data.correct === true || data.correct === false) {
       chips.push({ ok: data.correct, n: attemptNum });
-      $('chips').innerHTML = chips.map(c =>
-        `<span class="chip-a ${c.ok ? 'good' : 'bad'}">${c.ok ? 'Верно' : 'Мимо'} · ${c.n}</span>`).join('');
+      renderChips();
       paintStreak();
       if (data.correct) tasksDone++;
-      $('levelPill').textContent = (curLang() === 'kk' ? 'Деңгей: ' : 'Уровень: ') + (tasksDone >= 4 ? 'высокий' : tasksDone >= 2 ? 'средний' : 'старт');
+      $('levelPill').textContent = tr('lvl') + (tasksDone >= 4 ? tr('lvlHigh') : tasksDone >= 2 ? tr('lvlMid') : tr('lvlStart'));
     }
   } catch (e) {
     $('submitBtn').disabled = false;
-    $('status').textContent = 'Нет связи с сервером. Проверь интернет и попробуй ещё раз.';
+    $('status').textContent = tr('noConn');
   }
 }
 
@@ -235,11 +249,11 @@ async function submitAnswer() {
   let a;
   if (curKind === 'choice') {
     const sel = document.querySelector('input[name="opt"]:checked');
-    if (!sel) { $('status').textContent = curLang() === 'kk' ? 'Нұсқаны таңда' : 'Выбери вариант ответа'; return; }
+    if (!sel) { $('status').textContent = tr('pickOpt'); return; }
     a = sel.value;
   } else {
     a = $('answerInput').value.trim();
-    if (!a) { $('status').textContent = curLang() === 'kk' ? 'Алдымен жауапты жаз' : 'Сначала напиши ответ'; return; }
+    if (!a) { $('status').textContent = tr('writeAns'); return; }
   }
   nextTurn(a);
 }
@@ -260,12 +274,12 @@ function renderOptions(data) {
     });
     box.style.display = 'flex';
     $('answerInput').style.display = 'none';
-    $('answerLbl').textContent = curLang() === 'kk' ? 'Нұсқаны таңда' : 'Выбери вариант';
+    $('answerLbl').textContent = tr('chooseOpt');
   } else {
     box.style.display = 'none';
     box.innerHTML = '';
     $('answerInput').style.display = '';
-    $('answerLbl').textContent = curLang() === 'kk' ? 'Жауабың' : 'Твой ответ';
+    $('answerLbl').textContent = tr('yourAnswer');
   }
 }
 function replayTheory() { if (lastTask) Voice.speak(lastTask); else if (lastTheory) Voice.speak(lastTheory); }
@@ -276,27 +290,29 @@ function listenLesson() {
 function setSpeed(v) { try { localStorage.setItem('tasked_speed', v); } catch (e) {} }
 try { const s = localStorage.getItem('tasked_speed'); if (s) $('spdSel').value = s; } catch (e) {}
 
-// dictate answer via Azure STT in current language
-let recognizer = null, listening = false;
+// dictate answer via Azure STT in current language (own recognizer state)
+let dictRec = null, dictOn = false;
+let micRec = null, micOn = false;
 function showStatus(t) { const el = $('voiceStatus'); el.textContent = t; el.style.display = t ? 'block' : 'none'; }
+function stopRec(rec) { try { rec && rec.stopContinuousRecognitionAsync(); } catch (e) {} }
 async function dictateAnswer() {
   const cfg = await (await fetch('/api/speech/config')).json();
-  if (!window.SpeechSDK || !cfg.key) { $('status').textContent = 'Диктовка недоступна: нет ключа распознавания'; return; }
-  if (listening) { try { recognizer.stopContinuousRecognitionAsync(); } catch (e) {} listening = false; $('dictBtn').classList.remove('listening'); $('status').textContent = ''; return; }
+  if (!window.SpeechSDK || !cfg.key) { $('status').textContent = tr('noStt'); return; }
+  if (dictOn) { stopRec(dictRec); dictRec = null; dictOn = false; $('dictBtn').classList.remove('listening'); $('status').textContent = ''; return; }
   const sc = SpeechSDK.SpeechConfig.fromSubscription(cfg.key, cfg.region);
   sc.speechRecognitionLanguage = Voice.sttLang();
-  recognizer = new SpeechSDK.SpeechRecognizer(sc, SpeechSDK.AudioConfig.fromDefaultMicrophoneInput());
-  listening = true;
+  dictRec = new SpeechSDK.SpeechRecognizer(sc, SpeechSDK.AudioConfig.fromDefaultMicrophoneInput());
+  dictOn = true;
   $('dictBtn').classList.add('listening');
-  $('status').textContent = curLang() === 'kk' ? 'Тыңдап тұрмын… айтқаның жазылады' : 'Слушаю… сказанное появится в поле ответа';
-  recognizer.recognized = (s, e) => {
+  $('status').textContent = tr('listening');
+  dictRec.recognized = (s, e) => {
     if (e.result.reason !== SpeechSDK.ResultReason.RecognizedSpeech || !e.result.text) return;
     $('answerInput').value = e.result.text;
     $('status').textContent = '';
-    recognizer.stopContinuousRecognitionAsync(); listening = false;
+    stopRec(dictRec); dictRec = null; dictOn = false;
     $('dictBtn').classList.remove('listening');
   };
-  recognizer.startContinuousRecognitionAsync(() => {}, (err) => { listening = false; $('dictBtn').classList.remove('listening'); $('status').textContent = 'Нет доступа к микрофону'; });
+  dictRec.startContinuousRecognitionAsync(() => {}, (err) => { dictRec = null; dictOn = false; $('dictBtn').classList.remove('listening'); $('status').textContent = tr('noMic'); });
 }
 
 // ---------------- voice chat ----------------
@@ -307,36 +323,34 @@ function toggleSound() {
   if (!soundOn) Voice.stopAll();
 }
 function testVoice() {
-  addMsg('ai', curLang() === 'kk'
-    ? 'Егер осы фразаны естісең — дыбыс бапталған.'
-    : 'Если слышишь эту фразу — звук настроен.');
-  Voice.speak(curLang() === 'kk' ? 'Дауыс жұмыс істеп тұр! Мен сенің ЖИ-мұғаліміңмін.' : 'Голос работает! Я твой ИИ-учитель.');
+  addMsg('ai', tr('voiceTestOk'));
+  Voice.speak(tr('voiceTestSay'));
 }
 
 async function toggleMic() {
   const cfg = await (await fetch('/api/speech/config')).json();
-  if (!window.SpeechSDK || !cfg.key) { showStatus('Распознавание недоступно'); return; }
-  if (listening) {
-    try { recognizer.stopContinuousRecognitionAsync(); } catch (e) {}
-    listening = false; $('micBtn').classList.remove('listening'); showStatus('');
+  if (!window.SpeechSDK || !cfg.key) { showStatus(tr('sttOff')); return; }
+  if (micOn) {
+    stopRec(micRec); micRec = null;
+    micOn = false; $('micBtn').classList.remove('listening'); showStatus('');
     return;
   }
   const sc = SpeechSDK.SpeechConfig.fromSubscription(cfg.key, cfg.region);
   sc.speechRecognitionLanguage = Voice.sttLang();
-  recognizer = new SpeechSDK.SpeechRecognizer(sc, SpeechSDK.AudioConfig.fromDefaultMicrophoneInput());
-  listening = true;
+  micRec = new SpeechSDK.SpeechRecognizer(sc, SpeechSDK.AudioConfig.fromDefaultMicrophoneInput());
+  micOn = true;
   $('micBtn').classList.add('listening');
-  showStatus(curLang() === 'kk' ? 'Тыңдап тұрмын… (тоқтату үшін басыңыз)' : 'Слушаю… (нажми ещё раз, чтобы остановить)');
-  recognizer.recognized = async (s, e) => {
+  showStatus(tr('listeningChat'));
+  micRec.recognized = async (s, e) => {
     if (e.result.reason !== SpeechSDK.ResultReason.RecognizedSpeech || !e.result.text) return;
     showStatus('');
-    try { recognizer.stopContinuousRecognitionAsync(); } catch (err) {}
-    listening = false; $('micBtn').classList.remove('listening');
+    stopRec(micRec); micRec = null;
+    micOn = false; $('micBtn').classList.remove('listening');
     await sendChat(e.result.text);
   };
-  recognizer.startContinuousRecognitionAsync(() => {}, () => {
-    listening = false; $('micBtn').classList.remove('listening');
-    showStatus('Нет доступа к микрофону');
+  micRec.startContinuousRecognitionAsync(() => {}, () => {
+    micRec = null; micOn = false; $('micBtn').classList.remove('listening');
+    showStatus(tr('noMic'));
   });
 }
 
@@ -366,14 +380,21 @@ async function sendChat(forced) {
       body: JSON.stringify({ topic: $('topicTitle').textContent, history: chatHistory.slice(-10), lang: curLang() })
     });
     const data = await r.json();
-    thinking.textContent = data.reply || ('Ошибка: ' + (data.error || ''));
+    thinking.textContent = data.reply || (tr('errAi') + (data.detail ? '' : ''));
     chatHistory.push({ role: 'teacher', text: data.reply || '' });
     if (soundOn && data.reply) Voice.speak(data.reply);
-  } catch (e) { thinking.textContent = 'Нет связи с сервером'; }
+  } catch (e) { thinking.textContent = tr('noConn'); }
   $('chatLog').scrollTop = $('chatLog').scrollHeight;
 }
 
-window.onLangChange = () => refreshLangLabel();
+window.onLangChange = () => {
+  refreshLangLabel();
+  $('taskTitle').textContent = tr('taskFromAi');
+  $('levelPill').textContent = tr('lvl') + (tasksDone >= 4 ? tr('lvlHigh') : tasksDone >= 2 ? tr('lvlMid') : tr('lvlStart'));
+  if (attemptNum) $('taskNum').textContent = tr('taskN') + attemptNum;
+  renderChips();
+  if (window.i18n) i18n.apply(curLang());
+};
 if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 loadTopic();
 </script>

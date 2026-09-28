@@ -31,13 +31,13 @@
     <div id="guestBox" class="empty-box" style="display:none">
       <p><b data-i18n="cabGuestT">Войди, чтобы видеть свой прогресс</b><br><span data-i18n="cabGuestP">Прогресс, XP и классы доступны ученикам с аккаунтом.</span></p>
       <div class="auth-tabs" style="max-width:280px;margin:0 auto 12px">
-        <button id="tabLogin" class="active" onclick="authTab('login')">Вход</button>
-        <button id="tabReg" onclick="authTab('register')">Регистрация</button>
+        <button id="tabLogin" class="active" onclick="authTab('login')" data-i18n="tabLogin">Вход</button>
+        <button id="tabReg" onclick="authTab('register')" data-i18n="tabReg">Регистрация</button>
       </div>
       <div style="max-width:280px;margin:0 auto;text-align:left">
-        <label>Логин</label><input id="sLogin" placeholder="логин">
-        <label>Пароль</label><input id="sPass" type="password" placeholder="пароль" onkeydown="if(event.key==='Enter')doAuth()">
-        <button class="btn primary" style="width:100%;margin-top:14px" onclick="doAuth()">Войти</button>
+        <label data-i18n="fLogin">Логин</label><input id="sLogin" data-i18n-ph="loginPh" placeholder="логин">
+        <label data-i18n="fPass">Пароль</label><input id="sPass" type="password" data-i18n-ph="passPh" placeholder="пароль" onkeydown="if(event.key==='Enter')doAuth()">
+        <button class="btn primary" style="width:100%;margin-top:14px" id="authGo" onclick="doAuth()" data-i18n="goLogin">Войти</button>
         <p id="authMsg" class="err" style="margin-top:8px;font-size:13px"></p>
       </div>
     </div>
@@ -113,10 +113,12 @@
 <script>
 let me = null, authMode = 'login', myClasses = [];
 
+function tr(k) { return (window.i18n && i18n.t(k)) || k; }
 function authTab(m) {
   authMode = m;
   document.getElementById('tabLogin').classList.toggle('active', m === 'login');
   document.getElementById('tabReg').classList.toggle('active', m === 'register');
+  document.getElementById('authGo').textContent = m === 'register' ? tr('goReg') : tr('goLogin');
 }
 async function doAuth() {
   const login = document.getElementById('sLogin').value.trim();
@@ -124,7 +126,11 @@ async function doAuth() {
   const url = authMode === 'register' ? '/api/auth/student/register' : '/api/auth/student/login';
   const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password }) });
   const d = await r.json();
-  if (d.error) { document.getElementById('authMsg').textContent = d.error === 'bad_credentials' ? 'Неверный логин или пароль' : d.error === 'login_taken' ? 'Логин занят' : d.error; return; }
+  if (d.error) {
+    const map = { bad_credentials: tr('errBad'), login_taken: tr('errTaken'), password_too_short: tr('errShort'), login_taken_or_invalid: tr('errLoginBad') };
+    document.getElementById('authMsg').textContent = map[d.error] || d.error;
+    return;
+  }
   boot();
 }
 async function logout() { await fetch('/api/auth/logout', { method: 'POST' }); location.reload(); }
@@ -160,7 +166,8 @@ async function loadOverview() {
   document.getElementById('myEmpty').style.display = (o.topics && o.topics.length) ? 'none' : 'block';
   if (o.topics) o.topics.forEach(t => {
     const c = document.createElement('div');
-    c.className = 'card';
+    c.className = 'card clickable';
+    c.onclick = () => location.href = t.topic_id ? '/lesson.html?topic=' + t.topic_id : '/';
     c.innerHTML = `<div class="head"><h3 style="flex:1"></h3>${t.completed ? '<span class="status-pill" style="border-color:var(--green-line);background:var(--green-bg);color:var(--green)">✓</span>' : ''}</div>
       <div class="meta"><i data-icon="checkcircle"></i><span></span></div>
       <button class="btn" style="margin-top:4px"><span data-i18n="continueT">Продолжить</span><i data-icon="arrowright"></i></button>`;
@@ -177,16 +184,17 @@ async function loadClasses() {
   myClasses = await (await fetch('/api/my-classes')).json();
   const box = document.getElementById('classList');
   box.innerHTML = '';
-  if (!myClasses.length) box.innerHTML = '<p class="muted">Пока нет классов — вступи по коду выше.</p>';
+  if (!myClasses.length) box.innerHTML = '<p class="muted">' + tr('noClasses') + '</p>';
   for (const c of myClasses) {
     const d = document.createElement('div');
     d.className = 'card';
     d.innerHTML = `<div class="head"><div class="tile"><i data-icon="users"></i></div>
       <div style="flex:1"><h3></h3><div class="meta"></div></div>
-      <button class="btn small ghost leaveBtn">Покинуть</button></div>
+      <button class="btn small ghost leaveBtn"></button></div>
       <div class="board"></div>`;
     d.querySelector('h3').textContent = c.name;
-    d.querySelector('.meta').textContent = 'Код ' + c.code + ' · ' + (c.teacher ? '@' + c.teacher : '') + ' · ' + c.members;
+    d.querySelector('.meta').textContent = tr('membersCode') + ' ' + c.code + ' · ' + (c.teacher ? '@' + c.teacher : '') + ' · ' + c.members + ' ' + tr('membersU');
+    d.querySelector('.leaveBtn').textContent = tr('leave');
     d.querySelector('.leaveBtn').onclick = async () => {
       await fetch('/api/my-classes/' + c.id, { method: 'DELETE' });
       loadClasses();
@@ -209,13 +217,13 @@ async function joinClass() {
   if (!code) return;
   const r = await fetch('/api/classes/join', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
   const d = await r.json();
-  if (d.error) { document.getElementById('joinMsg').textContent = 'Неверный код. Проверь у учителя.'; return; }
+  if (d.error) { document.getElementById('joinMsg').textContent = tr('badCode'); return; }
   document.getElementById('joinMsg').textContent = '';
   document.getElementById('joinCode').value = '';
   loadClasses();
 }
 async function deleteAccount() {
-  if (!confirm('Точно удалить аккаунт и весь прогресс? Это необратимо.')) return;
+  if (!confirm(tr('delAccQ'))) return;
   await fetch('/api/account', { method: 'DELETE' });
   location.href = '/';
 }

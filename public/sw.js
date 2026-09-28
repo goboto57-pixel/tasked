@@ -1,7 +1,7 @@
 // tasked service worker: offline shell + cached topics
-const CACHE = 'tasked-v1';
+const CACHE = 'tasked-v2';
 const CORE = [
-  '/', '/offline.html',
+  '/', '/offline.html', '/lesson.html', '/student.html', '/teacher.html',
   '/css/style.css',
   '/js/icons.js', '/js/theme.js', '/js/i18n.js', '/js/voice.js',
   '/img/logo.svg', '/img/favicon.svg',

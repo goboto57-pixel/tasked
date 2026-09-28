@@ -148,7 +148,8 @@ function verify(token) {
     if (!token || !token.includes('.')) return null;
     const [b, h] = token.split('.');
     const expect = crypto.createHmac('sha256', SECRET).update(b).digest('base64url');
-    if (h !== expect) return null;
+    const hb = Buffer.from(h), eb = Buffer.from(expect);
+    if (hb.length !== eb.length || !crypto.timingSafeEqual(hb, eb)) return null;
     return JSON.parse(Buffer.from(b, 'base64url').toString());
   } catch { return null; }
 }
@@ -165,7 +166,8 @@ const authTeacher = requireRole('teacher', 'admin');
 const authAdmin = requireRole('admin');
 const authStudent = requireRole('student');
 function setSession(res, payload) {
-  res.cookie('session', sign(payload), { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 3600 * 1000 });
+  const local = (process.env.DATABASE_URL || '').includes('localhost');
+  res.cookie('session', sign(payload), { httpOnly: true, sameSite: 'lax', secure: !local, maxAge: 30 * 24 * 3600 * 1000 });
 }
 
 // ---------- gamification ----------
@@ -735,7 +737,12 @@ function parseTeacherEntries(history) {
 }
 
 async function saveProgress(prog, history, topicId, studentKey, studentId) {
-  const score = history.filter(h => h.role === 'teacher').length;
+  // score = number of correct answers (not teacher turns)
+  let score = 0;
+  for (const h of history) {
+    if (h.role !== 'teacher') continue;
+    try { if (JSON.parse(h.text).correct === true) score++; } catch { /* ignore */ }
+  }
   await pool.query(
     'UPDATE progress SET history=$1::jsonb, score=$2, attempts=attempts+1, updated_at=now(), student_id=COALESCE(student_id,$4) WHERE id=$3',
     [JSON.stringify(history.slice(-40)), score, prog.id, studentId]);
@@ -750,11 +757,11 @@ app.post('/api/ai/turn', async (req, res) => {
     studentId = sess.id;
     studentKey = 'student:' + sess.login;
   }
-  if (!topicId || !studentKey) return res.status(400).json({ error: 'topicId и studentKey обязательны' });
+  if (!topicId || !studentKey) return res.status(400).json({ error: 'bad_request' });
   studentKey = String(studentKey).slice(0, 120);
 
   const topic = (await pool.query('SELECT * FROM topics WHERE id=$1', [topicId])).rows[0];
-  if (!topic) return res.status(404).json({ error: 'Тема не найдена' });
+  if (!topic) return res.status(404).json({ error: 'topic_not_found' });
 
   let prog = (await pool.query('SELECT * FROM progress WHERE topic_id=$1 AND student_key=$2', [topicId, studentKey])).rows[0];
   if (!prog) {
@@ -869,7 +876,7 @@ app.post('/api/ai/turn', async (req, res) => {
     res.json(ai);
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: 'Ошибка ИИ: ' + e.message });
+    res.status(500).json({ error: 'ai_error', detail: String(e.message || e).slice(0, 200) });
   }
 });
 
