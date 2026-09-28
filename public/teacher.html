@@ -4,6 +4,8 @@
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>tasked — Панель учителя</title>
 <link rel="icon" href="/img/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0b0c0e">
 <link rel="stylesheet" href="/css/style.css">
 <script>try{document.documentElement.dataset.theme=localStorage.getItem('tasked_theme')==='light'?'light':'dark'}catch(e){document.documentElement.dataset.theme='dark'}</script>
 </head>
@@ -52,7 +54,10 @@
     <aside class="sidebar">
       <div class="side-title">РАЗДЕЛЫ</div>
       <button class="side-item active" onclick="showTab('topics', this)"><i data-icon="book"></i><span>Темы</span></button>
-      <button class="side-item" onclick="showTab('students', this)"><i data-icon="users"></i><span>Ученики и прогресс</span></button>
+      <button class="side-item" onclick="showTab('bank', this)"><i data-icon="flag"></i><span>Банк заданий</span></button>
+      <button class="side-item" onclick="showTab('classes', this)"><i data-icon="users"></i><span>Классы</span></button>
+      <button class="side-item" onclick="showTab('students', this)"><i data-icon="trending"></i><span>Ученики и прогресс</span></button>
+      <button class="side-item" id="navReports" style="display:none" onclick="showTab('reports', this)"><i data-icon="chat"></i><span>Жалобы</span></button>
       <button class="side-item" id="navAdmin" style="display:none" onclick="showTab('admin', this)"><i data-icon="key"></i><span>Доступы учителей</span></button>
       <a class="side-item" href="/"><i data-icon="home"></i><span>Каталог глазами ученика</span></a>
       <div class="stat-box" id="statBox">
@@ -101,12 +106,63 @@
       </div>
 
       <div id="tabStudents" style="display:none">
-        <h2 class="section-title">Прогресс учеников</h2>
-        <p class="muted" style="margin:4px 0 14px">Кто занимается по твоим темам и сколько заданий прошёл.</p>
-        <div class="card table-wrap" style="cursor:default; padding:0; overflow:hidden">
+        <div class="section-head">
+          <div><h2 class="section-title">Прогресс учеников</h2>
+          <p class="muted" style="margin:4px 0 0">Кто занимается по твоим темам и сколько заданий прошёл.</p></div>
+          <button class="btn small" onclick="location.href='/api/teacher/export.csv'"><i data-icon="send"></i><span>Скачать CSV</span></button>
+        </div>
+        <div class="card table-wrap" style="cursor:default; padding:0; overflow:hidden;margin-top:14px">
           <table>
             <thead><tr><th>Тема</th><th>Ученик</th><th>Пройдено</th><th>Активность</th></tr></thead>
             <tbody id="progBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="tabBank" style="display:none">
+        <h2 class="section-title">Банк заданий</h2>
+        <p class="muted" style="margin:4px 0 14px">Свои задания с автопроверкой: выбор варианта или число. Если у темы есть задания — урок идёт по ним, а теорию пишет ИИ.</p>
+        <div class="card" style="margin-bottom:18px">
+          <label>Тема</label>
+          <select id="bankTopic" onchange="loadBank()"></select>
+          <div id="bankList" style="display:flex;flex-direction:column;gap:8px;margin:12px 0"></div>
+          <h3 style="font-size:14px;margin-top:8px">Новое задание</h3>
+          <div style="display:grid;grid-template-columns:200px 1fr;gap:10px" class="create-grid">
+            <div><label>Тип</label>
+              <select id="bkKind" onchange="document.getElementById('bkOptsRow').style.display=this.value==='choice'?'block':'none'">
+                <option value="choice">Выбор варианта</option><option value="number">Число</option>
+              </select>
+            </div>
+            <div><label>Правильный ответ</label><input id="bkAnswer" placeholder="точный текст верного варианта или число"></div>
+          </div>
+          <label>Текст задания</label>
+          <textarea id="bkPrompt" rows="2" placeholder="Например: Сколько будет 7 × 8?"></textarea>
+          <div id="bkOptsRow"><label>Варианты (каждый с новой строки, минимум 2)</label>
+          <textarea id="bkOpts" rows="3" placeholder="54&#10;56&#10;48"></textarea></div>
+          <button class="btn primary" style="margin-top:12px" onclick="addBankTask()"><i data-icon="plus"></i>Добавить задание</button>
+          <p id="bkMsg" class="err" style="margin-top:8px;font-size:13px"></p>
+        </div>
+      </div>
+
+      <div id="tabClasses" style="display:none">
+        <h2 class="section-title">Классы</h2>
+        <p class="muted" style="margin:4px 0 14px">Создай класс и покажи код ученикам — они вступят в «Моих темах». Там же виден рейтинг по XP.</p>
+        <div class="card" style="margin-bottom:18px">
+          <div style="display:flex;gap:8px;align-items:end">
+            <div style="flex:1"><label>Название класса</label><input id="clsName" placeholder="Например: 5 «А»"></div>
+            <button class="btn primary" onclick="createClass()">Создать</button>
+          </div>
+        </div>
+        <div id="classList" style="display:flex;flex-direction:column;gap:12px"></div>
+      </div>
+
+      <div id="tabReports" style="display:none">
+        <h2 class="section-title">Жалобы учеников</h2>
+        <p class="muted" style="margin:4px 0 14px">Сообщения с кнопки «Сообщить о проблеме» на уроке.</p>
+        <div class="card table-wrap" style="padding:0;overflow:hidden">
+          <table>
+            <thead><tr><th>Дата</th><th>Ученик</th><th>Тема</th><th>Текст</th><th></th></tr></thead>
+            <tbody id="repBody"></tbody>
           </table>
         </div>
       </div>
@@ -132,6 +188,23 @@
         </div>
       </div>
     </main>
+  </div>
+</div>
+
+<!-- topic settings modal -->
+<div class="modal-bg" id="topicModal">
+  <div class="modal" style="width:520px">
+    <div class="modal-head">
+      <h3><i data-icon="pencil"></i>Настройка темы</h3>
+      <button class="btn ghost small" onclick="closeTopicModal()">Закрыть</button>
+    </div>
+    <div style="padding:20px 22px">
+      <label>Название</label><input id="etTitle">
+      <label>Описание</label><textarea id="etDesc" rows="3"></textarea>
+      <label>Своя теория (необязательно — пусто = напишет ИИ)</label>
+      <textarea id="etTheory" rows="5" placeholder="Свой текст теории для урока…"></textarea>
+      <button class="btn primary" style="width:100%;margin-top:14px" onclick="saveTopic()">Сохранить</button>
+    </div>
   </div>
 </div>
 
@@ -162,7 +235,8 @@ async function checkAuth() {
   document.getElementById('whoLogin').textContent = me.login;
   document.getElementById('whoRole').textContent = me.role === 'admin' ? 'Создатель' : 'Учитель';
   if (me.role === 'admin') document.getElementById('navAdmin').style.display = 'flex';
-  loadMine(); loadProgress();
+  document.getElementById('navReports').style.display = 'flex';
+  loadMine(); loadProgress(); loadReports();
   if (me.role === 'admin') loadAdmin();
 }
 async function doLogin() {
@@ -190,11 +264,13 @@ async function doRegister() {
 async function logout() { await fetch('/api/auth/logout', { method: 'POST' }); location.reload(); }
 
 function showTab(name, el) {
-  document.getElementById('tabTopics').style.display = name === 'topics' ? 'block' : 'none';
-  document.getElementById('tabStudents').style.display = name === 'students' ? 'block' : 'none';
-  document.getElementById('tabAdmin').style.display = name === 'admin' ? 'block' : 'none';
+  for (const t of ['topics', 'bank', 'classes', 'students', 'reports', 'admin'])
+    document.getElementById('tab' + t[0].toUpperCase() + t.slice(1)).style.display = name === t ? 'block' : 'none';
   document.querySelectorAll('.side-item').forEach(x => x.classList.remove('active'));
   el.classList.add('active');
+  if (name === 'bank') loadBankTopics();
+  if (name === 'classes') loadClasses();
+  if (name === 'reports') loadReports();
 }
 
 let myTopics = [];
@@ -202,6 +278,7 @@ async function loadMine() {
   myTopics = await (await fetch('/api/topics')).json();
   renderTable(myTopics);
   document.getElementById('stTopics').textContent = myTopics.length;
+  if (document.getElementById('bankTopic')) loadBankTopics();
 }
 function renderTable(list) {
   const tb = document.querySelector('#topicsTable tbody');
@@ -213,10 +290,12 @@ function renderTable(list) {
     tr.innerHTML = `<td><b></b></td><td>${cat}</td><td class="muted">${new Date(t.created_at).toLocaleDateString('ru')}</td>
       <td><span class="status-pill">Опубликовано</span></td>
       <td><div class="row-actions"><button class="icon-btn open">Открыть</button>
+          <button class="icon-btn cfg">Настроить</button>
           <button class="icon-btn linkbtn"><i data-icon="link"></i>Ссылка</button>
           <button class="icon-btn del">Удалить</button></div></td>`;
     tr.querySelector('b').textContent = t.title;
     tr.querySelector('.open').onclick = () => location.href = '/lesson.html?topic=' + t.id;
+    tr.querySelector('.cfg').onclick = () => openTopicModal(t.id);
     tr.querySelector('.linkbtn').onclick = (ev) => copyTopicLink(t.id, ev.currentTarget);
     tr.querySelector('.del').onclick = () => delTopic(t.id);
     tb.appendChild(tr);
@@ -315,6 +394,179 @@ async function createTeacher() {
   document.getElementById('ntLogin').value = ''; document.getElementById('ntPass').value = ''; document.getElementById('ntEmail').value = '';
   loadAdmin();
 }
+
+// ---- topic settings (title/desc/own theory) ----
+let editId = null;
+function openTopicModal(id) {
+  const t = myTopics.find(x => x.id === id);
+  if (!t) return;
+  editId = id;
+  document.getElementById('etTitle').value = t.title;
+  document.getElementById('etDesc').value = (t.description || '').replace(/^\[.+?\]\s*/, '');
+  document.getElementById('etTheory').value = t.theory_override || '';
+  const m = document.getElementById('topicModal');
+  m.style.display = 'flex'; m.classList.add('open');
+}
+function closeTopicModal() { const m = document.getElementById('topicModal'); m.style.display = 'none'; m.classList.remove('open'); }
+async function saveTopic() {
+  const cat = (myTopics.find(x => x.id === editId)?.description.match(/^\[(.+?)\]/) || [])[1];
+  const desc = document.getElementById('etDesc').value.trim();
+  await fetch('/api/topics/' + editId, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: document.getElementById('etTitle').value.trim(),
+      description: (cat ? '[' + cat + '] ' : '') + desc,
+      theory_override: document.getElementById('etTheory').value.trim(),
+    })
+  });
+  closeTopicModal(); loadMine();
+}
+
+// ---- task bank ----
+async function loadBankTopics() {
+  const sel = document.getElementById('bankTopic');
+  const cur = sel.value;
+  sel.innerHTML = '';
+  if (!myTopics.length) sel.innerHTML = '<option value="">Сначала создайте тему</option>';
+  myTopics.forEach(t => {
+    const o = document.createElement('option');
+    o.value = t.id; o.textContent = t.title;
+    sel.appendChild(o);
+  });
+  if (cur && myTopics.some(t => t.id == cur)) sel.value = cur;
+  loadBank();
+}
+async function loadBank() {
+  const id = document.getElementById('bankTopic').value;
+  const box = document.getElementById('bankList');
+  box.innerHTML = '';
+  if (!id) return;
+  const rows = await (await fetch('/api/teacher/topics/' + id + '/tasks')).json();
+  if (!rows.length) box.innerHTML = '<p class="muted">Заданий нет — добавьте первое ниже. Пока банк пуст, задания придумывает ИИ.</p>';
+  rows.forEach(t => {
+    const d = document.createElement('div');
+    d.style.cssText = 'border:1px solid var(--line);border-radius:10px;padding:10px 14px;display:flex;gap:10px;align-items:center';
+    d.innerHTML = `<span class="status-pill">${t.kind === 'number' ? 'Число' : 'Выбор'}</span>
+      <div style="flex:1"><b style="font-size:13.5px"></b><div class="muted" style="font-size:12.5px"></div></div>
+      <button class="icon-btn del">Удалить</button>`;
+    d.querySelector('b').textContent = t.prompt;
+    d.querySelector('.muted').textContent = 'Ответ: ' + t.answer + (t.kind === 'choice' ? ' · вариантов: ' + t.options.length : '');
+    d.querySelector('button').onclick = async () => {
+      await fetch('/api/teacher/tasks/' + t.id, { method: 'DELETE' });
+      loadBank();
+    };
+    box.appendChild(d);
+  });
+}
+async function addBankTask() {
+  const id = document.getElementById('bankTopic').value;
+  if (!id) return;
+  const kind = document.getElementById('bkKind').value;
+  const r = await fetch('/api/teacher/topics/' + id + '/tasks', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      kind,
+      prompt: document.getElementById('bkPrompt').value.trim(),
+      options: document.getElementById('bkOpts').value,
+      answer: document.getElementById('bkAnswer').value.trim(),
+    })
+  });
+  const d = await r.json();
+  const map = {
+    need_2_options: 'Нужно минимум 2 варианта ответа',
+    answer_not_in_options: 'Ответ должен совпадать с одним из вариантов',
+    need_prompt_answer: 'Заполни текст задания и ответ',
+  };
+  if (d.error || d.id === undefined) {
+    document.getElementById('bkMsg').textContent = map[d.error] || (d.id ? '' : 'Ошибка');
+    if (d.id) { document.getElementById('bkMsg').textContent = ''; }
+    else return;
+  }
+  document.getElementById('bkMsg').textContent = '';
+  document.getElementById('bkPrompt').value = '';
+  document.getElementById('bkOpts').value = '';
+  document.getElementById('bkAnswer').value = '';
+  loadBank();
+}
+
+// ---- classes ----
+async function createClass() {
+  const name = document.getElementById('clsName').value.trim();
+  if (!name) return;
+  await fetch('/api/classes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+  document.getElementById('clsName').value = '';
+  loadClasses();
+}
+async function loadClasses() {
+  const rows = await (await fetch('/api/classes')).json();
+  const box = document.getElementById('classList');
+  box.innerHTML = '';
+  if (!rows.length) box.innerHTML = '<p class="muted">Классов нет — создайте первый выше.</p>';
+  for (const c of rows) {
+    const d = document.createElement('div');
+    d.className = 'card';
+    d.innerHTML = `<div class="head"><div class="tile"><i data-icon="users"></i></div>
+      <div style="flex:1"><h3></h3><div class="meta">Код: <b class="mono"></b> · <span class="mcnt"></span></div></div></div>
+      <div class="row-actions" style="margin-top:4px">
+        <button class="btn small cp">Копировать код</button>
+        <button class="btn small ghost rg">Новый код</button>
+        <button class="btn small danger del">Удалить</button>
+      </div>
+      <div class="members" style="margin-top:10px"></div>`;
+    d.querySelector('h3').textContent = c.name;
+    d.querySelector('.mono').textContent = c.code;
+    d.querySelector('.mcnt').textContent = 'учеников: ' + c.members;
+    d.querySelector('.cp').onclick = async (ev) => {
+      try { await navigator.clipboard.writeText(c.code); } catch (e) {}
+      ev.currentTarget.textContent = 'Скопировано';
+      setTimeout(() => ev.currentTarget.textContent = 'Копировать код', 1500);
+    };
+    d.querySelector('.rg').onclick = async () => {
+      if (!confirm('Сменить код? Старый перестанет работать.')) return;
+      await fetch('/api/classes/' + c.id + '/regen', { method: 'POST' });
+      loadClasses();
+    };
+    d.querySelector('.del').onclick = async () => {
+      if (!confirm('Удалить класс «' + c.name + '»?')) return;
+      await fetch('/api/classes/' + c.id, { method: 'DELETE' });
+      loadClasses();
+    };
+    box.appendChild(d);
+    const members = await (await fetch('/api/classes/' + c.id + '/members')).json();
+    const mb = d.querySelector('.members');
+    mb.innerHTML = members.length
+      ? '<div class="chips">' + members.map((m, i) =>
+        `<span class="chip-a${i === 0 ? ' good' : ''}">${i + 1}. ${escapeHtml(m.name)} · ${m.xp} XP · ур. ${m.level}</span>`).join('') + '</div>'
+      : '<p class="muted">Пока никто не вступил — покажи код ученикам.</p>';
+  }
+  paintIcons(box);
+}
+function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+// ---- reports ----
+async function loadReports() {
+  const rows = await (await fetch('/api/teacher/reports')).json();
+  const tb = document.getElementById('repBody');
+  tb.innerHTML = '';
+  const open = rows.filter(r => r.status !== 'done');
+  if (!rows.length) tb.innerHTML = '<tr><td colspan="5" class="muted" style="padding:24px">Жалоб нет — всё спокойно</td></tr>';
+  rows.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="muted">${new Date(r.created_at).toLocaleString('ru')}</td>
+      <td class="mono"></td><td></td><td></td>
+      <td>${r.status === 'done' ? '<span class="status-pill">Закрыта</span>' : '<button class="btn small">Закрыть</button>'}</td>`;
+    tr.children[1].textContent = r.student_login || '—';
+    tr.children[2].textContent = r.topic_title || '—';
+    tr.children[3].textContent = r.text;
+    const btn = tr.querySelector('.btn');
+    if (btn) btn.onclick = async () => {
+      await fetch('/api/reports/' + r.id + '/resolve', { method: 'POST' });
+      loadReports();
+    };
+    tb.appendChild(tr);
+  });
+}
+if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 checkAuth();
 </script>
 </body>

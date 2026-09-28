@@ -1,0 +1,14 @@
+{
+  "name": "tasked — адаптивное обучение с ИИ",
+  "short_name": "tasked",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0c0e",
+  "theme_color": "#0b0c0e",
+  "description": "ИИ-репетитор: теория, задания и голосовой разбор на русском и казахском",
+  "icons": [
+    { "src": "/img/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/img/logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

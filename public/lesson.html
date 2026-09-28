@@ -4,6 +4,8 @@
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Урок — tasked</title>
 <link rel="icon" href="/img/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0b0c0e">
 <link rel="stylesheet" href="/css/style.css">
 <script>try{document.documentElement.dataset.theme=localStorage.getItem('tasked_theme')==='light'?'light':'dark'}catch(e){document.documentElement.dataset.theme='dark'}</script>
 </head>
@@ -36,7 +38,20 @@
       <div class="callout"><i data-icon="mic"></i><span data-i18n="voiceHint">Не понял тему? Нажми «Голосовой помощник» — спроси учителя, он ответит голосом.</span></div>
       <div class="btn-row">
         <button class="btn small" onclick="replayTheory()"><i data-icon="volume"></i><span data-i18n="speakBtn">Озвучить</span></button>
+        <button class="btn small" onclick="listenLesson()"><i data-icon="play"></i><span data-i18n="listenAll">Слушать урок</span></button>
+        <select id="spdSel" style="width:auto;flex:none" title="Скорость озвучки" onchange="setSpeed(this.value)">
+          <option value="0.85">0.85x</option><option value="1" selected>1x</option><option value="1.15">1.15x</option>
+        </select>
         <button class="btn small ghost" onclick="Voice.stopAll()"><i data-icon="volumex"></i><span data-i18n="stopBtn">Стоп</span></button>
+        <button class="btn small ghost" onclick="window.print()"><i data-icon="printer"></i><span data-i18n="printBtn">Печать</span></button>
+      </div>
+      <div style="margin-top:12px">
+        <button class="btn small ghost" onclick="toggleReport()"><i data-icon="flag"></i><span data-i18n="reportBtn">Сообщить о проблеме</span></button>
+        <div id="reportBox" style="display:none;margin-top:8px">
+          <textarea id="reportText" rows="2" data-i18n-ph="reportPh" placeholder="Что не так? Напиши, учитель увидит."></textarea>
+          <button class="btn small primary" style="margin-top:8px" onclick="sendReport()"><span data-i18n="sendBtn">Отправить</span></button>
+          <span class="muted" id="reportOk" style="margin-left:8px"></span>
+        </div>
       </div>
     </div>
 
@@ -52,7 +67,8 @@
           <div class="task-num" id="taskNum">ЗАДАЧА #1</div>
           <div class="task-text" id="taskText">…</div>
         </div>
-        <label for="answerInput" data-i18n="yourAnswer">Твой ответ</label>
+        <label for="answerInput" id="answerLbl" data-i18n="yourAnswer">Твой ответ</label>
+        <div id="optBox" class="opts" style="display:none"></div>
         <textarea id="answerInput" rows="2" data-i18n-ph="answerPh" placeholder="Напиши ответ или нажми «Диктовать»" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();submitAnswer();}"></textarea>
         <div class="btn-row">
           <button class="btn primary grow" id="submitBtn" onclick="submitAnswer()"><i data-icon="check"></i><span data-i18n="check">Проверить</span></button>
@@ -78,6 +94,7 @@
   <span data-i18n="voiceAsst">Голосовой помощник</span>
 </button>
 <div id="voiceStatus"></div>
+<div id="caption"></div>
 
 <div class="modal-bg" id="voiceModal">
   <div class="modal">
@@ -122,6 +139,7 @@
 const topicId = new URLSearchParams(location.search).get('topic');
 const $ = id => document.getElementById(id);
 let tasksDone = 0, attemptNum = 0, lastAnswer = null, soundOn = true, lastTheory = '', lastTask = '';
+let curKind = 'text';
 const chips = [];
 
 function curLang() { return (window.i18n && i18n.get()) || 'ru'; }
@@ -193,6 +211,7 @@ async function nextTurn(answer) {
       attemptNum++;
       setStep(2);
       lastTask = data.task;
+      renderOptions(data);
       $('stTaskN').textContent = '#' + attemptNum;
       $('taskNum').textContent = (curLang() === 'kk' ? 'ТАПСЫРМА #' : 'ЗАДАЧА #') + attemptNum;
       $('taskText').textContent = data.task;
@@ -203,6 +222,7 @@ async function nextTurn(answer) {
       setStep(3);
       $('taskWrap').style.display = 'none';
       $('answerInput').style.display = 'none';
+      $('optBox').style.display = 'none';
       $('status').textContent = curLang() === 'kk' ? 'Керемет! Тақырып меңгерілді.' : 'Готово! Тема закреплена — так держать.';
       if (soundOn && data.feedback) Voice.speak(data.feedback);
     }
@@ -221,11 +241,67 @@ async function nextTurn(answer) {
 }
 
 async function submitAnswer() {
-  const a = $('answerInput').value.trim();
-  if (!a) { $('status').textContent = curLang() === 'kk' ? 'Алдымен жауапты жаз' : 'Сначала напиши ответ'; return; }
+  let a;
+  if (curKind === 'choice') {
+    const sel = document.querySelector('input[name="opt"]:checked');
+    if (!sel) { $('status').textContent = curLang() === 'kk' ? 'Нұсқаны таңда' : 'Выбери вариант ответа'; return; }
+    a = sel.value;
+  } else {
+    a = $('answerInput').value.trim();
+    if (!a) { $('status').textContent = curLang() === 'kk' ? 'Алдымен жауапты жаз' : 'Сначала напиши ответ'; return; }
+  }
   nextTurn(a);
 }
+function renderOptions(data) {
+  curKind = data.taskKind === 'choice' && Array.isArray(data.options) && data.options.length ? 'choice' : 'text';
+  const box = $('optBox');
+  if (curKind === 'choice') {
+    box.innerHTML = '';
+    data.options.forEach((o, i) => {
+      const l = document.createElement('label');
+      l.className = 'opt';
+      const r = document.createElement('input');
+      r.type = 'radio'; r.name = 'opt'; r.value = o;
+      const s = document.createElement('span');
+      s.textContent = o;
+      l.append(r, s);
+      box.appendChild(l);
+    });
+    box.style.display = 'flex';
+    $('answerInput').style.display = 'none';
+    $('answerLbl').textContent = curLang() === 'kk' ? 'Нұсқаны таңда' : 'Выбери вариант';
+  } else {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    $('answerInput').style.display = '';
+    $('answerLbl').textContent = curLang() === 'kk' ? 'Жауабың' : 'Твой ответ';
+  }
+}
 function replayTheory() { if (lastTask) Voice.speak(lastTask); else if (lastTheory) Voice.speak(lastTheory); }
+function listenLesson() {
+  const t = ((lastTheory ? lastTheory + '\n' : '') + (lastTask || '')).slice(0, 1000);
+  if (t.trim()) Voice.speak(t);
+}
+function setSpeed(v) { try { localStorage.setItem('tasked_speed', v); } catch (e) {} }
+try { const s = localStorage.getItem('tasked_speed'); if (s) $('spdSel').value = s; } catch (e) {}
+function toggleReport() {
+  const b = $('reportBox');
+  b.style.display = b.style.display === 'none' ? 'block' : 'none';
+}
+async function sendReport() {
+  const text = $('reportText').value.trim();
+  if (!text) return;
+  const r = await fetch('/api/report', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ topicId, text })
+  });
+  if (r.status === 401) {
+    $('reportOk').textContent = curLang() === 'kk' ? 'Алдымен кіру керек' : 'Нужно войти как ученик';
+    return;
+  }
+  $('reportText').value = '';
+  $('reportOk').textContent = curLang() === 'kk' ? 'Рахмет! Мұғалім көреді.' : 'Спасибо! Учитель увидит.';
+}
 
 // dictate answer via Azure STT in current language
 let recognizer = null, listening = false;
@@ -325,6 +401,7 @@ async function sendChat(forced) {
 }
 
 window.onLangChange = () => refreshLangLabel();
+if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 loadTopic();
 </script>
 </body>

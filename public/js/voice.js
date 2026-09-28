@@ -11,21 +11,37 @@
     return lang() === 'kk' ? 'kk-KZ' : 'ru-RU';
   }
 
+  function showCaption(t) {
+    const c = document.getElementById('caption');
+    if (!c) return;
+    c.textContent = String(t).slice(0, 240);
+    c.style.display = 'block';
+  }
+  function hideCaption() {
+    const c = document.getElementById('caption');
+    if (c) c.style.display = 'none';
+  }
+
   function stopAll() {
+    hideCaption();
     try { if (audioEl) { audioEl.pause(); audioEl.src = ''; } } catch (e) {}
     try { speechSynthesis && speechSynthesis.cancel(); } catch (e) {}
   }
 
   async function fishSpeak(text) {
+    const speed = parseFloat(localStorage.getItem('tasked_speed') || '1') || 1;
     const r = await fetch('/api/voice/tts', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text.slice(0, 1000), lang: lang() }),
+      body: JSON.stringify({ text: text.slice(0, 1000), lang: lang(), speed }),
     });
     if (!r.ok) throw new Error('fish ' + r.status);
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
     stopAll();
+    showCaption(text);
     audioEl = new Audio(url);
+    audioEl.onended = hideCaption;
+    audioEl.onerror = hideCaption;
     await audioEl.play();
     return true;
   }

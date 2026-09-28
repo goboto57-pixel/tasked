@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tasked — Мои темы</title>
+<link rel="icon" href="/img/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="stylesheet" href="/css/style.css">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('tasked_theme')==='light'?'light':'dark'}catch(e){document.documentElement.dataset.theme='dark'}</script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/"><img src="/img/logo.svg" alt="tasked"><span class="word">tasked</span></a>
+  <div class="top-actions">
+    <button class="theme-btn" data-theme-btn onclick="toggleTheme()"><i data-icon="sun"></i></button>
+    <div class="lang-switch"><button data-lang="ru" onclick="setLang('ru')">RU</button><button data-lang="kk" onclick="setLang('kk')">KZ</button></div>
+    <div class="user" id="userArea"></div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="side-title" data-i18n="nav">Навигация</div>
+    <a class="side-item" href="/"><i data-icon="home"></i><span data-i18n="catalog">Каталог</span></a>
+    <button class="side-item active"><i data-icon="user"></i><span data-i18n="myTopics">Мои темы</span></button>
+    <a class="side-item" href="/teacher.html"><i data-icon="shield"></i><span data-i18n="teacherDash">Панель учителя</span></a>
+  </aside>
+
+  <main class="main">
+    <!-- guest -->
+    <div id="guestBox" class="empty-box" style="display:none">
+      <p><b data-i18n="cabGuestT">Войди, чтобы видеть свой прогресс</b><br><span data-i18n="cabGuestP">Прогресс, XP и классы доступны ученикам с аккаунтом.</span></p>
+      <div class="auth-tabs" style="max-width:280px;margin:0 auto 12px">
+        <button id="tabLogin" class="active" onclick="authTab('login')">Вход</button>
+        <button id="tabReg" onclick="authTab('register')">Регистрация</button>
+      </div>
+      <div style="max-width:280px;margin:0 auto;text-align:left">
+        <label>Логин</label><input id="sLogin" placeholder="логин">
+        <label>Пароль</label><input id="sPass" type="password" placeholder="пароль" onkeydown="if(event.key==='Enter')doAuth()">
+        <button class="btn primary" style="width:100%;margin-top:14px" onclick="doAuth()">Войти</button>
+        <p id="authMsg" class="err" style="margin-top:8px;font-size:13px"></p>
+      </div>
+    </div>
+
+    <!-- cabinet -->
+    <div id="cab" style="display:none">
+      <div class="card" style="flex-direction:row;align-items:center;gap:16px;margin-bottom:18px">
+        <div class="tile" style="width:54px;height:54px;font-size:22px;font-weight:800" id="ava">?</div>
+        <div style="flex:1">
+          <h2 id="cabName" style="font-size:19px">—</h2>
+          <div class="muted" id="cabSub">—</div>
+        </div>
+        <button class="btn small" onclick="logout()"><i data-icon="logout"></i><span data-i18n="logout">Выйти</span></button>
+      </div>
+
+      <div class="stat-cards">
+        <div class="card"><div class="tile"><i data-icon="sparkles"></i></div><div><div class="big" id="stXp">0</div><div class="muted">XP</div></div></div>
+        <div class="card"><div class="tile"><i data-icon="trending"></i></div><div><div class="big" id="stLevel">1</div><div class="muted" data-i18n="levelLbl">уровень</div></div></div>
+        <div class="card"><div class="tile"><i data-icon="clock"></i></div><div><div class="big" id="stStreak">0</div><div class="muted" data-i18n="streakDLbl">дней подряд</div></div></div>
+        <div class="card"><div class="tile"><i data-icon="book"></i></div><div><div class="big" id="stTopics">0</div><div class="muted" data-i18n="topicsLbl">тем начато</div></div></div>
+      </div>
+
+      <div class="section-head"><h2 class="section-title" data-i18n="myTopics">Мои темы</h2>
+        <button class="btn small" onclick="location.href='/api/student/export.csv'"><i data-icon="send"></i><span>CSV</span></button>
+      </div>
+      <div id="myGrid" class="grid"></div>
+      <div id="myEmpty" class="empty-box" style="display:none;margin-bottom:18px">
+        <p><b data-i18n="noTopicsT">Ты ещё не начал ни одной темы</b><br><span data-i18n="noTopicsP">Выбери тему в каталоге — она появится здесь.</span></p>
+        <a class="btn" href="/"><i data-icon="book"></i><span data-i18n="allTopicsBtn">Все темы</span></a>
+      </div>
+
+      <div class="section-head" style="margin-top:24px"><h2 class="section-title" data-i18n="myClasses">Мои классы</h2></div>
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="font-size:14px" data-i18n="joinT">Вступить в класс по коду</h3>
+        <p class="muted" data-i18n="joinP">Код даёт учитель — например на доске в классе.</p>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <input id="joinCode" placeholder="ABC123" class="mono" style="max-width:180px;text-transform:uppercase">
+          <button class="btn primary" onclick="joinClass()"><span data-i18n="joinBtn">Вступить</span></button>
+        </div>
+        <p id="joinMsg" class="err" style="margin-top:8px;font-size:13px"></p>
+      </div>
+      <div id="classList" style="display:flex;flex-direction:column;gap:12px"></div>
+
+      <div class="card" style="margin-top:24px;border-color:var(--red-line)">
+        <h3 style="font-size:14px;color:var(--red)" data-i18n="dangerT">Удалить аккаунт</h3>
+        <p class="muted" data-i18n="dangerP">Удалятся твой прогресс, XP и участие в классах. Действие необратимо.</p>
+        <button class="btn danger" style="margin-top:10px" onclick="deleteAccount()"><i data-icon="trash"></i><span data-i18n="deleteAcc">Удалить мой аккаунт</span></button>
+      </div>
+
+      <footer class="footer">
+        <img src="/img/logo.svg" alt="tasked"><span><b>tasked</b> · <span data-i18n="footerTag">Адаптивное обучение с ИИ</span></span>
+      </footer>
+    </div>
+  </main>
+</div>
+
+<div id="langGate">
+  <div class="box">
+    <img class="logo" src="/img/logo.svg" alt="tasked">
+    <div style="font-weight:800;letter-spacing:3px;font-size:13px;color:var(--muted)">TASKED</div>
+    <h1 data-i18n="gateTitle">Тілді таңдаңыз / Выберите язык</h1>
+    <p data-i18n="gateSub">Интерфейс, озвучка и распознавание речи будут на выбранном языке.</p>
+    <div class="lang-pick">
+      <button onclick="setLang('kk')">Қазақша<small>казахский · kk-KZ</small></button>
+      <button onclick="setLang('ru')">Русский<small>русский · ru-RU</small></button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/icons.js"></script>
+<script src="/js/theme.js"></script>
+<script src="/js/i18n.js"></script>
+<script>
+let me = null, authMode = 'login', myClasses = [];
+
+function authTab(m) {
+  authMode = m;
+  document.getElementById('tabLogin').classList.toggle('active', m === 'login');
+  document.getElementById('tabReg').classList.toggle('active', m === 'register');
+}
+async function doAuth() {
+  const login = document.getElementById('sLogin').value.trim();
+  const password = document.getElementById('sPass').value;
+  const url = authMode === 'register' ? '/api/auth/student/register' : '/api/auth/student/login';
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password }) });
+  const d = await r.json();
+  if (d.error) { document.getElementById('authMsg').textContent = d.error === 'bad_credentials' ? 'Неверный логин или пароль' : d.error === 'login_taken' ? 'Логин занят' : d.error; return; }
+  boot();
+}
+async function logout() { await fetch('/api/auth/logout', { method: 'POST' }); location.reload(); }
+
+async function boot() {
+  const r = await fetch('/api/auth/me');
+  me = r.ok ? await r.json() : null;
+  if (!me || me.role !== 'student') {
+    if (me) { await fetch('/api/auth/logout', { method: 'POST' }); }
+    document.getElementById('guestBox').style.display = 'block';
+    document.getElementById('cab').style.display = 'none';
+    document.getElementById('userArea').innerHTML = '<a class="btn primary small" href="/"><i data-icon="home"></i><span>Каталог</span></a>';
+    paintIcons(document);
+    return;
+  }
+  document.getElementById('guestBox').style.display = 'none';
+  document.getElementById('cab').style.display = 'block';
+  document.getElementById('userArea').innerHTML = '';
+  loadOverview(); loadClasses();
+}
+
+async function loadOverview() {
+  const o = await (await fetch('/api/me/overview')).json();
+  document.getElementById('ava').textContent = (o.login || '?')[0].toUpperCase();
+  document.getElementById('cabName').textContent = o.display_name || o.login;
+  document.getElementById('cabSub').textContent = '@' + o.login;
+  document.getElementById('stXp').textContent = o.xp;
+  document.getElementById('stLevel').textContent = o.level;
+  document.getElementById('stStreak').textContent = o.streak_days;
+  document.getElementById('stTopics').textContent = o.topics.length;
+  const g = document.getElementById('myGrid');
+  g.innerHTML = '';
+  document.getElementById('myEmpty').style.display = o.topics.length ? 'none' : 'block';
+  o.topics.forEach(t => {
+    const c = document.createElement('div');
+    c.className = 'card';
+    c.innerHTML = `<div class="head"><h3 style="flex:1"></h3>${t.completed ? '<span class="status-pill" style="border-color:var(--green-line);background:var(--green-bg);color:var(--green)">✓</span>' : ''}</div>
+      <div class="meta"><i data-icon="checkcircle"></i><span></span></div>
+      <button class="btn" style="margin-top:4px"><span data-i18n="continueT">Продолжить</span><i data-icon="arrowright"></i></button>`;
+    c.querySelector('h3').textContent = t.title;
+    c.querySelector('.meta span').textContent = t.score + ' / ' + t.attempts;
+    c.querySelector('button').onclick = () => location.href = '/lesson.html?topic=' + t.topic_id;
+    g.appendChild(c);
+  });
+  paintIcons(g);
+  if (window.i18n) i18n.apply(i18n.get() || 'ru');
+}
+
+async function loadClasses() {
+  myClasses = await (await fetch('/api/my-classes')).json();
+  const box = document.getElementById('classList');
+  box.innerHTML = '';
+  if (!myClasses.length) box.innerHTML = '<p class="muted">Пока нет классов — вступи по коду выше.</p>';
+  for (const c of myClasses) {
+    const d = document.createElement('div');
+    d.className = 'card';
+    d.innerHTML = `<div class="head"><div class="tile"><i data-icon="users"></i></div>
+      <div style="flex:1"><h3></h3><div class="meta"></div></div>
+      <button class="btn small ghost leaveBtn">Покинуть</button></div>
+      <div class="board"></div>`;
+    d.querySelector('h3').textContent = c.name;
+    d.querySelector('.meta').textContent = 'Код ' + c.code + ' · ' + (c.teacher ? '@' + c.teacher : '') + ' · ' + c.members;
+    d.querySelector('.leaveBtn').onclick = async () => {
+      await fetch('/api/my-classes/' + c.id, { method: 'DELETE' });
+      loadClasses();
+    };
+    box.appendChild(d);
+    loadBoard(c.id, d.querySelector('.board'));
+  }
+  paintIcons(box);
+}
+async function loadBoard(classId, el) {
+  const rows = await (await fetch('/api/classes/' + classId + '/board')).json();
+  if (!rows.length) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div class="chips" style="margin-top:6px">' + rows.slice(0, 8).map((r, i) =>
+    `<span class="chip-a${i === 0 ? ' good' : ''}">${i + 1}. ${escapeHtml(r.name)} · ${r.xp} XP</span>`).join('') + '</div>';
+}
+function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+async function joinClass() {
+  const code = document.getElementById('joinCode').value.trim();
+  if (!code) return;
+  const r = await fetch('/api/classes/join', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+  const d = await r.json();
+  if (d.error) { document.getElementById('joinMsg').textContent = 'Неверный код. Проверь у учителя.'; return; }
+  document.getElementById('joinMsg').textContent = '';
+  document.getElementById('joinCode').value = '';
+  loadClasses();
+}
+async function deleteAccount() {
+  if (!confirm('Точно удалить аккаунт и весь прогресс? Это необратимо.')) return;
+  await fetch('/api/account', { method: 'DELETE' });
+  location.href = '/';
+}
+if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+boot();
+</script>
+</body>
+</html>

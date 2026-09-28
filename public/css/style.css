@@ -208,7 +208,35 @@ button { font-family: inherit; }
 .streak .fill { height: 100%; width: 0%; border-radius: 99px; background: var(--ink); transition: width .35s ease; }
 .streak.done .fill { background: var(--green); }
 
-/* modal entrance */
+/* choice options */
+.opts { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 6px; }
+.opt {
+  display: flex; gap: 10px; align-items: center; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px;
+  font-size: 14px; margin: 0; color: var(--ink);
+}
+.opt:hover { border-color: #3a3f47; }
+.opt input { width: auto; accent-color: var(--ink); }
+
+/* spoken captions */
+#caption {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 88px; z-index: 150;
+  max-width: min(640px, calc(100vw - 32px));
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 16px; font-size: 13.5px; color: var(--ink); display: none;
+  box-shadow: 0 12px 32px rgba(0,0,0,.35);
+}
+
+/* print: theory + task only */
+@media print {
+  .topbar, .sidebar, #voiceFab, .modal-bg, #langGate, #caption, #voiceStatus,
+  .btn-row, .callout, .stepper, .attempts, .footer, .theme-btn { display: none !important; }
+  body { background: #fff; color: #000; }
+  .main { padding: 0; max-width: none; }
+  .lesson-grid { grid-template-columns: 1fr; }
+  .theory-card, .task-card { border: 1px solid #999; break-inside: avoid; }
+  .theory-card .body, .task-text, .feedback { color: #000; }
+}
 .modal-bg.open { display: flex; }
 .modal-bg.open .modal { animation: pop .18s ease-out; }
 @keyframes pop { from { transform: translateY(8px) scale(.985); opacity: 0; } to { transform: none; opacity: 1; } }

@@ -4,6 +4,8 @@
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>tasked — Каталог тем</title>
 <link rel="icon" href="/img/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0b0c0e">
 <link rel="stylesheet" href="/css/style.css">
 <script>try{document.documentElement.dataset.theme=localStorage.getItem('tasked_theme')==='light'?'light':'dark'}catch(e){document.documentElement.dataset.theme='dark'}</script>
 </head>
@@ -25,6 +27,7 @@
     <div id="cats"></div>
     <div class="side-title" data-i18n="account">Аккаунт</div>
     <button class="side-item" id="sideAuth" onclick="onUserClick()"><i data-icon="user"></i><span data-i18n="loginAsStudent">Войти как ученик</span></button>
+    <a class="side-item" href="/student.html"><i data-icon="trophy"></i><span data-i18n="myTopics">Мои темы</span></a>
     <a class="side-item" href="/teacher.html"><i data-icon="shield"></i><span data-i18n="teacherDash">Панель учителя</span></a>
     <div class="stat-box">
       <h4><i data-icon="lightbulb"></i><span data-i18n="howItWorks">Как это работает</span></h4>
@@ -56,6 +59,29 @@
     <div id="empty" class="empty-box" style="display:none">
       <p><b data-i18n="emptyT">Тем пока нет</b><br><span data-i18n="emptyP">Темы создаёт учитель в панели управления.</span></p>
       <a class="btn" href="/teacher.html"><i data-icon="shield"></i><span data-i18n="openDash">Открыть панель учителя</span></a>
+    </div>
+    <div class="section-head" style="margin-top:26px">
+      <h2 class="section-title" data-i18n="tariffs">Тарифы</h2>
+    </div>
+    <div class="grid" id="tariffs">
+      <div class="card">
+        <div class="eyebrow" data-i18n="free">Бесплатно</div>
+        <h3 data-i18n="tStudent">Ученик</h3>
+        <p data-i18n="tStudentD">Все уроки, голосовой помощник, прогресс и классы — без ограничений.</p>
+        <button class="btn" style="margin-top:4px" onclick="onUserClick()"><span data-i18n="start">Начать</span><i data-icon="arrowright"></i></button>
+      </div>
+      <div class="card">
+        <div class="eyebrow" data-i18n="soon">Скоро</div>
+        <h3 data-i18n="tPro">Репетитор Pro</h3>
+        <p data-i18n="tProD">Свои задания с автопроверкой, классы до 100 учеников, выгрузка отчётов.</p>
+        <a class="btn" style="margin-top:4px" href="/teacher.html"><span data-i18n="becomeTeacher">Стать учителем</span><i data-icon="arrowright"></i></a>
+      </div>
+      <div class="card">
+        <div class="eyebrow" data-i18n="soon">Скоро</div>
+        <h3 data-i18n="tSchool">Школа</h3>
+        <p data-i18n="tSchoolD">Все учителя школы, панель создателя, общая аналитика и поддержка.</p>
+        <a class="btn" style="margin-top:4px" href="/teacher.html"><span data-i18n="openDash">Открыть панель учителя</span><i data-icon="arrowright"></i></a>
+      </div>
     </div>
     <footer class="footer">
       <img src="/img/logo.svg" alt="tasked"><span><b>tasked</b> · <span data-i18n="footerTag">Адаптивное обучение с ИИ</span></span>
@@ -248,6 +274,7 @@ function filterCat(name, el) {
   el.classList.add('active');
   render();
 }
+if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 loadMe(); loadTopics();
 </script>
 </body>
