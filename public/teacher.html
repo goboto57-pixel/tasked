@@ -57,7 +57,6 @@
       <button class="side-item" onclick="showTab('bank', this)"><i data-icon="flag"></i><span>Банк заданий</span></button>
       <button class="side-item" onclick="showTab('classes', this)"><i data-icon="users"></i><span>Классы</span></button>
       <button class="side-item" onclick="showTab('students', this)"><i data-icon="trending"></i><span>Ученики и прогресс</span></button>
-      <button class="side-item" id="navReports" style="display:none" onclick="showTab('reports', this)"><i data-icon="chat"></i><span>Жалобы</span></button>
       <button class="side-item" id="navAdmin" style="display:none" onclick="showTab('admin', this)"><i data-icon="key"></i><span>Доступы учителей</span></button>
       <a class="side-item" href="/"><i data-icon="home"></i><span>Каталог глазами ученика</span></a>
       <div class="stat-box" id="statBox">
@@ -156,17 +155,6 @@
         <div id="classList" style="display:flex;flex-direction:column;gap:12px"></div>
       </div>
 
-      <div id="tabReports" style="display:none">
-        <h2 class="section-title">Жалобы учеников</h2>
-        <p class="muted" style="margin:4px 0 14px">Сообщения с кнопки «Сообщить о проблеме» на уроке.</p>
-        <div class="card table-wrap" style="padding:0;overflow:hidden">
-          <table>
-            <thead><tr><th>Дата</th><th>Ученик</th><th>Тема</th><th>Текст</th><th></th></tr></thead>
-            <tbody id="repBody"></tbody>
-          </table>
-        </div>
-      </div>
-
       <div id="tabAdmin" style="display:none">
         <h2 class="section-title">Доступы учителей</h2>
         <p class="muted" style="margin:4px 0 14px">Создай логин и пароль — передай их учителю, он войдёт на этой странице. Пароли хранятся в виде хэша и никому не показываются; при потере просто задай новый.</p>
@@ -235,8 +223,7 @@ async function checkAuth() {
   document.getElementById('whoLogin').textContent = me.login;
   document.getElementById('whoRole').textContent = me.role === 'admin' ? 'Создатель' : 'Учитель';
   if (me.role === 'admin') document.getElementById('navAdmin').style.display = 'flex';
-  document.getElementById('navReports').style.display = 'flex';
-  loadMine(); loadProgress(); loadReports();
+  loadMine(); loadProgress();
   if (me.role === 'admin') loadAdmin();
 }
 async function doLogin() {
@@ -264,13 +251,12 @@ async function doRegister() {
 async function logout() { await fetch('/api/auth/logout', { method: 'POST' }); location.reload(); }
 
 function showTab(name, el) {
-  for (const t of ['topics', 'bank', 'classes', 'students', 'reports', 'admin'])
+  for (const t of ['topics', 'bank', 'classes', 'students', 'admin'])
     document.getElementById('tab' + t[0].toUpperCase() + t.slice(1)).style.display = name === t ? 'block' : 'none';
   document.querySelectorAll('.side-item').forEach(x => x.classList.remove('active'));
   el.classList.add('active');
   if (name === 'bank') loadBankTopics();
   if (name === 'classes') loadClasses();
-  if (name === 'reports') loadReports();
 }
 
 let myTopics = [];
@@ -542,30 +528,6 @@ async function loadClasses() {
   paintIcons(box);
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
-
-// ---- reports ----
-async function loadReports() {
-  const rows = await (await fetch('/api/teacher/reports')).json();
-  const tb = document.getElementById('repBody');
-  tb.innerHTML = '';
-  const open = rows.filter(r => r.status !== 'done');
-  if (!rows.length) tb.innerHTML = '<tr><td colspan="5" class="muted" style="padding:24px">Жалоб нет — всё спокойно</td></tr>';
-  rows.forEach(r => {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td class="muted">${new Date(r.created_at).toLocaleString('ru')}</td>
-      <td class="mono"></td><td></td><td></td>
-      <td>${r.status === 'done' ? '<span class="status-pill">Закрыта</span>' : '<button class="btn small">Закрыть</button>'}</td>`;
-    tr.children[1].textContent = r.student_login || '—';
-    tr.children[2].textContent = r.topic_title || '—';
-    tr.children[3].textContent = r.text;
-    const btn = tr.querySelector('.btn');
-    if (btn) btn.onclick = async () => {
-      await fetch('/api/reports/' + r.id + '/resolve', { method: 'POST' });
-      loadReports();
-    };
-    tb.appendChild(tr);
-  });
-}
 if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 checkAuth();
 </script>

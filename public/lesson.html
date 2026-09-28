@@ -45,14 +45,6 @@
         <button class="btn small ghost" onclick="Voice.stopAll()"><i data-icon="volumex"></i><span data-i18n="stopBtn">Стоп</span></button>
         <button class="btn small ghost" onclick="window.print()"><i data-icon="printer"></i><span data-i18n="printBtn">Печать</span></button>
       </div>
-      <div style="margin-top:12px">
-        <button class="btn small ghost" onclick="toggleReport()"><i data-icon="flag"></i><span data-i18n="reportBtn">Сообщить о проблеме</span></button>
-        <div id="reportBox" style="display:none;margin-top:8px">
-          <textarea id="reportText" rows="2" data-i18n-ph="reportPh" placeholder="Что не так? Напиши, учитель увидит."></textarea>
-          <button class="btn small primary" style="margin-top:8px" onclick="sendReport()"><span data-i18n="sendBtn">Отправить</span></button>
-          <span class="muted" id="reportOk" style="margin-left:8px"></span>
-        </div>
-      </div>
     </div>
 
     <div>
@@ -284,24 +276,6 @@ function listenLesson() {
 }
 function setSpeed(v) { try { localStorage.setItem('tasked_speed', v); } catch (e) {} }
 try { const s = localStorage.getItem('tasked_speed'); if (s) $('spdSel').value = s; } catch (e) {}
-function toggleReport() {
-  const b = $('reportBox');
-  b.style.display = b.style.display === 'none' ? 'block' : 'none';
-}
-async function sendReport() {
-  const text = $('reportText').value.trim();
-  if (!text) return;
-  const r = await fetch('/api/report', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ topicId, text })
-  });
-  if (r.status === 401) {
-    $('reportOk').textContent = curLang() === 'kk' ? 'Алдымен кіру керек' : 'Нужно войти как ученик';
-    return;
-  }
-  $('reportText').value = '';
-  $('reportOk').textContent = curLang() === 'kk' ? 'Рахмет! Мұғалім көреді.' : 'Спасибо! Учитель увидит.';
-}
 
 // dictate answer via Azure STT in current language
 let recognizer = null, listening = false;

@@ -88,14 +88,6 @@ async function initDb() {
       answer TEXT DEFAULT '',
       created_at TIMESTAMPTZ DEFAULT now()
     );
-    CREATE TABLE IF NOT EXISTS reports (
-      id SERIAL PRIMARY KEY,
-      student_id INT REFERENCES students(id) ON DELETE SET NULL,
-      topic_id INT REFERENCES topics(id) ON DELETE SET NULL,
-      text TEXT NOT NULL,
-      status TEXT DEFAULT 'open',
-      created_at TIMESTAMPTZ DEFAULT now()
-    );
   `);
 
   // backfill teacher logins (collision-safe)
@@ -204,18 +196,6 @@ async function touchActive(studentId) {
       last_active = CURRENT_DATE
     WHERE id = $1`, [studentId]);
 }
-
-// ---------- mild profanity filter (student answers) ----------
-const BAD_RU = ['дурак', 'идиот', 'тупой', 'дебил', 'бля', 'хуй', 'пизд', 'еба', 'сука', 'мразь', 'урод', 'заткнись', 'пошел на', 'пошёл на', 'нахер', 'нахрен', 'сдохни', 'убью'];
-const BAD_KK = ['ақымақ', 'боқауыз', 'сүмелек', 'мисыз', 'малсың', 'итсің'];
-function hasProfanity(text) {
-  const t = ' ' + String(text || '').toLowerCase() + ' ';
-  return BAD_RU.some(w => t.includes(w)) || BAD_KK.some(w => t.includes(w));
-}
-const NUDGE = {
-  ru: 'Давай общаться вежливо — без грубых слов. Попробуй ответить по существу, у тебя получится.',
-  kk: 'Сыпайы сөйлесейік — дөрекі сөзсіз. Мәні бойынша жауап беріп көр, қолыңнан келеді.',
-};
 
 // ---------- localized bank-task feedback ----------
 const PRAISE = {
@@ -612,38 +592,6 @@ app.get('/api/me/overview', authStudent, async (req, res) => {
   });
 });
 
-// ---------- reports (moderation) ----------
-app.post('/api/report', authStudent, async (req, res) => {
-  const text = String(req.body?.text || '').slice(0, 1000).trim();
-  const topicId = req.body?.topicId ? Number(req.body.topicId) : null;
-  if (!text) return res.status(400).json({ error: 'empty' });
-  const r = await pool.query('INSERT INTO reports (student_id, topic_id, text) VALUES ($1,$2,$3) RETURNING id', [req.user.id, topicId, text]);
-  res.json({ ok: true, id: r.rows[0].id });
-});
-app.get('/api/teacher/reports', authTeacher, async (req, res) => {
-  const r = req.user.role === 'admin'
-    ? await pool.query(`
-      SELECT r.*, s.login AS student_login, t.title AS topic_title
-      FROM reports r LEFT JOIN students s ON s.id=r.student_id LEFT JOIN topics t ON t.id=r.topic_id
-      ORDER BY r.created_at DESC LIMIT 200`)
-    : await pool.query(`
-      SELECT r.*, s.login AS student_login, t.title AS topic_title
-      FROM reports r LEFT JOIN students s ON s.id=r.student_id LEFT JOIN topics t ON t.id=r.topic_id
-      WHERE t.teacher_id=$1 OR r.topic_id IS NULL
-      ORDER BY r.created_at DESC LIMIT 200`, [req.user.id]);
-  res.json(r.rows);
-});
-app.post('/api/reports/:id/resolve', authTeacher, async (req, res) => {
-  if (req.user.role !== 'admin') {
-    const r = await pool.query(`
-      SELECT r.id FROM reports r LEFT JOIN topics t ON t.id=r.topic_id
-      WHERE r.id=$1 AND (t.teacher_id=$2 OR r.topic_id IS NULL)`, [req.params.id, req.user.id]);
-    if (!r.rows.length) return res.status(404).json({ error: 'not found' });
-  }
-  await pool.query(`UPDATE reports SET status='done' WHERE id=$1`, [req.params.id]);
-  res.json({ ok: true });
-});
-
 // ---------- CSV export ----------
 const csvCell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
 function sendCsv(res, name, header, rows) {
@@ -831,18 +779,6 @@ app.post('/api/ai/turn', async (req, res) => {
     await awardXp(studentId, 50);
     res.json(ai);
   };
-
-  // ---- profanity filter: nudge + repeat current task, no grading ----
-  if (answer && hasProfanity(answer)) {
-    const lastT = teacherEntries[teacherEntries.length - 1] || {};
-    const ai = {
-      theory: '', feedback: NUDGE[lang], task: lastT.task || '', correct: null,
-      taskKind: lastT.taskKind || 'text', options: lastT.options || [], bankTaskId: lastT.bankTaskId || null,
-    };
-    history.push({ role: 'teacher', text: JSON.stringify(ai) });
-    await saveProgress(prog, history, topicId, studentKey, studentId);
-    return res.json(ai);
-  }
 
   if (answer) {
     history.push({ role: 'student', text: String(answer).slice(0, 2000) });
