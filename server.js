@@ -760,33 +760,58 @@ async function geminiChat(messages, maxTokens = 900, json = false) {
     role: m.role === 'assistant' || m.role === 'model' ? 'model' : 'user',
     parts: [{ text: String(m.content || '') }],
   }));
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 60000);
-  try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemInstruction }] },
-        contents,
-        generationConfig: {
-          temperature: json ? 0.25 : 0.45,
-          maxOutputTokens: maxTokens,
-          ...(json ? { responseMimeType: 'application/json' } : {}),
-          thinkingConfig: { thinkingLevel: 'medium' },
-        },
-      }),
-      signal: ctrl.signal,
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const detail = payload.error?.message || `Gemini API ${response.status}`;
-      throw new Error(detail.slice(0, 240));
+  // NOTE: no thinkingConfig for 3.x flash (its thinking tier 503s often).
+  // 2.5-flash thinks inside maxOutputTokens by default and truncates answers,
+  // so thinking is disabled explicitly for it.
+  const thinkingFor = (model) => model.includes('2.5-flash') ? { thinkingBudget: 0 } : undefined;
+  const configFor = (model) => {
+    const cfg = {
+      temperature: json ? 0.25 : 0.45,
+      maxOutputTokens: maxTokens,
+      ...(json ? { responseMimeType: 'application/json' } : {}),
+    };
+    const thinking = thinkingFor(model);
+    if (thinking) cfg.thinkingConfig = thinking;
+    return cfg;
+  };
+  const bodyFor = (model) => ({
+    systemInstruction: { parts: [{ text: systemInstruction }] },
+    contents,
+    generationConfig: configFor(model),
+  });
+  const models = [GEMINI_MODEL, process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash']
+    .filter((m, i, a) => m && a.indexOf(m) === i);
+  let lastErr;
+  for (const model of models) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt) await new Promise(r => setTimeout(r, 1500 * attempt));
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 45000);
+      try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
+          body: JSON.stringify(bodyFor(model)),
+          signal: ctrl.signal,
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const detail = payload.error?.message || `Gemini API ${response.status}`;
+          lastErr = new Error(detail.slice(0, 240));
+          // retry same model, then fail over to the next one
+          if (response.status !== 503 && response.status !== 429) throw lastErr;
+          continue;
+        }
+        const text = payload.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('').trim();
+        if (!text) { lastErr = new Error('Gemini returned an empty response'); continue; }
+        return text;
+      } catch (e) {
+        if (e.name === 'AbortError') { lastErr = new Error('Gemini timeout'); break; }
+        lastErr = e;
+      } finally { clearTimeout(timer); }
     }
-    const text = payload.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('').trim();
-    if (!text) throw new Error('Gemini returned an empty response');
-    return text;
-  } finally { clearTimeout(timer); }
+  }
+  throw lastErr;
 }
 
 async function geminiJson(messages, maxTokens = 900) {
