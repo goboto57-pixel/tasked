@@ -76,8 +76,8 @@
       <div class="card" style="margin-bottom:14px">
         <h3 style="font-size:14px" data-i18n="joinT">Вступить в класс по коду</h3>
         <p class="muted" data-i18n="joinP">Код даёт учитель — например на доске в классе.</p>
-        <div style="display:flex;gap:8px;margin-top:10px">
-          <input id="joinCode" placeholder="ABC123" class="mono" style="max-width:180px;text-transform:uppercase">
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <input id="joinCode" placeholder="ABC123" class="mono" style="max-width:180px;flex:1;min-width:120px;text-transform:uppercase">
           <button class="btn primary" onclick="joinClass()"><span data-i18n="joinBtn">Вступить</span></button>
         </div>
         <p id="joinMsg" class="err" style="margin-top:8px;font-size:13px"></p>
