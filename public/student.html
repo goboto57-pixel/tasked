@@ -152,13 +152,13 @@ async function loadOverview() {
   document.getElementById('cabName').textContent = o.display_name || o.login;
   document.getElementById('cabSub').textContent = '@' + o.login;
   document.getElementById('stXp').textContent = o.xp;
-  document.getElementById('stLevel').textContent = o.level;
-  document.getElementById('stStreak').textContent = o.streak_days;
-  document.getElementById('stTopics').textContent = o.topics.length;
+  document.getElementById('stLevel').textContent = o.level || 1;
+  document.getElementById('stStreak').textContent = o.streak_days || 0;
+  document.getElementById('stTopics').textContent = (o.topics && o.topics.length) || 0;
   const g = document.getElementById('myGrid');
   g.innerHTML = '';
-  document.getElementById('myEmpty').style.display = o.topics.length ? 'none' : 'block';
-  o.topics.forEach(t => {
+  document.getElementById('myEmpty').style.display = (o.topics && o.topics.length) ? 'none' : 'block';
+  if (o.topics) o.topics.forEach(t => {
     const c = document.createElement('div');
     c.className = 'card';
     c.innerHTML = `<div class="head"><h3 style="flex:1"></h3>${t.completed ? '<span class="status-pill" style="border-color:var(--green-line);background:var(--green-bg);color:var(--green)">✓</span>' : ''}</div>
@@ -166,7 +166,7 @@ async function loadOverview() {
       <button class="btn" style="margin-top:4px"><span data-i18n="continueT">Продолжить</span><i data-icon="arrowright"></i></button>`;
     c.querySelector('h3').textContent = t.title;
     c.querySelector('.meta span').textContent = t.score + ' / ' + t.attempts;
-    c.querySelector('button').onclick = () => location.href = '/lesson.html?topic=' + t.topic_id;
+    c.querySelector('button').onclick = () => location.href = t.topic_id ? '/lesson.html?topic=' + t.topic_id : '/';
     g.appendChild(c);
   });
   paintIcons(g);

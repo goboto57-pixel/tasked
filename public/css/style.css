@@ -111,7 +111,7 @@ button { font-family: inherit; }
   border-radius: 999px; font-size: 12px; font-weight: 700; padding: 2px 9px; color: var(--muted);
 }
 .side-item.active .cnt { color: var(--ink); }
-.stat-box { margin-top: auto; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+.stat-box { margin-top: auto; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; }
 .stat-box h4 { font-size: 13.5px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
 .main { flex: 1; padding: 26px 30px 90px; min-width: 0; max-width: 1180px; }
 
@@ -135,7 +135,7 @@ button { font-family: inherit; }
 .hero h1 { font-size: 30px; margin-bottom: 8px; letter-spacing: -.3px; }
 .hero p { color: var(--muted); max-width: 640px; font-size: 14.5px; }
 .hero .cta-row { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
-.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 22px; }
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
 .step {
   background: var(--bg-soft); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px;
 }
@@ -144,7 +144,7 @@ button { font-family: inherit; }
 .step .d { color: var(--muted); font-size: 13px; }
 
 /* ---------- cards ---------- */
-.section-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 14px; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 8px; }
 .section-title { font-size: 18px; font-weight: 800; }
 .section-count { color: var(--faint); font-size: 13px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
@@ -153,7 +153,7 @@ button { font-family: inherit; }
   padding: 20px; display: flex; flex-direction: column; gap: 10px;
   transition: border-color .15s, transform .15s;
 }
-.card:hover { transform: translateY(-2px); border-color: #33373e; }
+.card:hover { border-color: var(--line); }
 .card .eyebrow { font-size: 11.5px; font-weight: 800; letter-spacing: 1.2px; color: var(--faint); text-transform: uppercase; }
 .card .head { display: flex; align-items: center; gap: 12px; }
 .tile {
@@ -172,7 +172,7 @@ button { font-family: inherit; }
   font-size: 14px; font-weight: 700; cursor: pointer; text-align: center; display: inline-flex;
   align-items: center; justify-content: center; gap: 8px; text-decoration: none;
 }
-.btn:hover { border-color: #3a3f47; }
+.btn:hover { border-color: var(--line); }
 .btn.primary { background: var(--btn); border-color: var(--btn); color: var(--btn-ink); }
 .btn.primary:hover { background: #fff; }
 .btn.ghost { background: transparent; }
@@ -247,8 +247,8 @@ button { font-family: inherit; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--card-2); border-radius: 99px; border: 2px solid var(--bg); }
 tr { transition: background .12s; }
-tbody tr:hover { background: rgba(255,255,255,.015); }
-[data-theme="light"] tbody tr:hover { background: rgba(0,0,0,.02); }
+
+
 
 .muted { color: var(--muted); font-size: 13.5px; }
 .ok { color: var(--green); } .err { color: var(--red); }
@@ -296,7 +296,7 @@ label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); 
 .theory-card .body { white-space: pre-wrap; color: #c9cdd3; }
 .callout {
   background: var(--card-2); border: 1px solid var(--line); border-radius: 10px;
-  padding: 14px 16px; margin-top: 16px; font-size: 13.5px; color: var(--muted);
+  padding: 14px 16px; margin-top: 8px; font-size: 13.5px; color: var(--muted);
   display: flex; gap: 10px; align-items: flex-start;
 }
 .callout b { color: var(--ink); }

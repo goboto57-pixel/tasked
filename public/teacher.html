@@ -39,17 +39,16 @@
 <!-- dashboard -->
 <div id="dash" style="display:none">
   <header class="topbar">
-    <a class="brand" href="/"><img src="/img/logo.svg" alt="tasked"><span class="word">tasked</span></a>
-    <div class="search"><span class="s-icon"><i data-icon="search"></i></span><input placeholder="Поиск по темам…" oninput="filterTable(this.value)"></div>
-    <div class="top-actions">
-      <div class="top-actions">
-      <button class="theme-btn" data-theme-btn onclick="toggleTheme()"><i data-icon="sun"></i></button>
-      <div class="user">
-        <div style="text-align:right"><div class="name" id="whoLogin">Учитель</div><div class="role" id="whoRole">Панель управления</div></div>
-        <button class="btn small" onclick="logout()" title="Выйти"><i data-icon="logout"></i><span>Выйти</span></button>
-      </div>
+  <a class="brand" href="/"><img src="/img/logo.svg" alt="tasked"><span class="word">tasked</span></a>
+  <div class="top-actions">
+    <button class="theme-btn" data-theme-btn onclick="toggleTheme()"><i data-icon="sun"></i></button>
+    <div class="lang-switch"><button data-lang="ru" onclick="setLang('ru')">RU</button><button data-lang="kk" onclick="setLang('kk')">KZ</button></div>
+    <div class="user">
+      <div style="text-align:right"><div class="name" id="whoLogin">Учитель</div><div class="role" id="whoRole">Панель управления</div></div>
+      <button class="btn small" onclick="logout()" title="Выйти"><i data-icon="logout"></i><span>Выйти</span></button>
     </div>
-  </header>
+  </div>
+</header>
   <div class="layout">
     <aside class="sidebar">
       <div class="side-title">РАЗДЕЛЫ</div>
