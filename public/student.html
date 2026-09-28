@@ -33,16 +33,8 @@
     <!-- guest -->
     <div id="guestBox" class="empty-box" style="display:none">
       <p><b data-i18n="cabGuestT">Войди, чтобы видеть свой прогресс</b><br><span data-i18n="cabGuestP">Прогресс, XP и классы доступны ученикам с аккаунтом.</span></p>
-      <div class="auth-tabs" style="max-width:280px;margin:0 auto 12px">
-        <button id="tabLogin" class="active" onclick="authTab('login')" data-i18n="tabLogin">Вход</button>
-        <button id="tabReg" onclick="authTab('register')" data-i18n="tabReg">Регистрация</button>
-      </div>
-      <div style="max-width:280px;margin:0 auto;text-align:left">
-        <label data-i18n="fLogin">Логин</label><input id="sLogin" data-i18n-ph="loginPh" placeholder="логин">
-        <label data-i18n="fPass">Пароль</label><input id="sPass" type="password" data-i18n-ph="passPh" placeholder="пароль" onkeydown="if(event.key==='Enter')doAuth()">
-        <button class="btn primary" style="width:100%;margin-top:14px" id="authGo" onclick="doAuth()" data-i18n="goLogin">Войти</button>
-        <p id="authMsg" class="err" style="margin-top:8px;font-size:13px"></p>
-      </div>
+      <p>Вход без пароля — по ссылке, подтверждающей почту.</p>
+      <a class="btn primary" href="/?auth=required" style="margin-top:12px">Войти через Google или почту</a>
     </div>
 
     <!-- cabinet -->
@@ -117,28 +109,9 @@
 <script src="/js/theme.js"></script>
 <script src="/js/i18n.js"></script>
 <script>
-let me = null, authMode = 'login', myClasses = [];
+let me = null, myClasses = [];
 
 function tr(k) { return (window.i18n && i18n.t(k)) || k; }
-function authTab(m) {
-  authMode = m;
-  document.getElementById('tabLogin').classList.toggle('active', m === 'login');
-  document.getElementById('tabReg').classList.toggle('active', m === 'register');
-  document.getElementById('authGo').textContent = m === 'register' ? tr('goReg') : tr('goLogin');
-}
-async function doAuth() {
-  const login = document.getElementById('sLogin').value.trim();
-  const password = document.getElementById('sPass').value;
-  const url = authMode === 'register' ? '/api/auth/student/register' : '/api/auth/student/login';
-  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password }) });
-  const d = await r.json();
-  if (d.error) {
-    const map = { bad_credentials: tr('errBad'), login_taken: tr('errTaken'), password_too_short: tr('errShort'), login_taken_or_invalid: tr('errLoginBad') };
-    document.getElementById('authMsg').textContent = map[d.error] || d.error;
-    return;
-  }
-  boot();
-}
 async function logout() { await fetch('/api/auth/logout', { method: 'POST' }); location.reload(); }
 
 async function boot() {

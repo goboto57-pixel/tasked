@@ -8,10 +8,30 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false        # строка подключения к бесплатной Postgres (Neon)
-      - key: MISTRAL_API_KEY
+      - key: GEMINI_API_KEY
         sync: false
-      - key: MISTRAL_MODEL
-        value: ministral-14b-latest
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: GEMINI_IMAGE_MODEL
+        value: gemini-3.1-flash-image
+      - key: GEMINI_IMAGE_ENABLED
+        value: false
+      - key: FIREBASE_API_KEY
+        sync: false
+      - key: FIREBASE_AUTH_DOMAIN
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_APP_ID
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false        # Firebase Admin JSON; private server-side secret
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: BREVO_SENDER_NAME
+        value: Tasked
       - key: AZURE_SPEECH_KEY
         sync: false
       - key: AZURE_SPEECH_REGION

@@ -4,11 +4,18 @@ const crypto = require('crypto');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const bcrypt = require('bcryptjs');
+const { initializeApp, cert, getApps } = require('firebase-admin/app');
+const { getAuth } = require('firebase-admin/auth');
 const { Pool } = require('pg');
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
+app.get('/lesson.html', (req, res, next) => {
+  if (!session(req) || session(req).role !== 'student') return res.redirect('/?auth=required&next=' + encodeURIComponent(req.originalUrl));
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 const pool = new Pool({
@@ -29,10 +36,23 @@ async function initDb() {
     );
     CREATE TABLE IF NOT EXISTS students (
       id SERIAL PRIMARY KEY,
-      login TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
+      login TEXT UNIQUE,
+      password_hash TEXT,
       display_name TEXT DEFAULT '',
       created_at TIMESTAMPTZ DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS email_login_codes (
+      email TEXT PRIMARY KEY,
+      code_hash TEXT NOT NULL,
+      attempts INT NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at TIMESTAMPTZ NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS auth_email_sends (
+      id BIGSERIAL PRIMARY KEY,
+      email TEXT NOT NULL,
+      request_ip TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE TABLE IF NOT EXISTS topics (
       id SERIAL PRIMARY KEY,
@@ -60,6 +80,15 @@ async function initDb() {
   await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS xp INT DEFAULT 0`);
   await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS streak_days INT DEFAULT 0`);
   await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS last_active DATE`);
+  await pool.query(`ALTER TABLE students ALTER COLUMN login DROP NOT NULL`);
+  await pool.query(`ALTER TABLE students ALTER COLUMN password_hash DROP NOT NULL`);
+  await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS email TEXT`);
+  await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS firebase_uid TEXT`);
+  await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS students_firebase_uid_uq ON students(firebase_uid) WHERE firebase_uid IS NOT NULL`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS students_email_uq ON students(LOWER(email)) WHERE email IS NOT NULL`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS auth_email_sends_email_time_idx ON auth_email_sends(email, created_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS auth_email_sends_ip_time_idx ON auth_email_sends(request_ip, created_at DESC)`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS theory_override TEXT DEFAULT ''`);
   await pool.query(`ALTER TABLE progress ADD COLUMN IF NOT EXISTS student_id INT REFERENCES students(id) ON DELETE CASCADE`);
   await pool.query(`ALTER TABLE progress ADD COLUMN IF NOT EXISTS completed BOOLEAN DEFAULT false`);
@@ -162,6 +191,138 @@ function requireRole(...roles) {
 const authTeacher = requireRole('teacher', 'admin');
 const authAdmin = requireRole('admin');
 const authStudent = requireRole('student');
+let firebaseAuth = null;
+const firebaseWebConfig = {
+  apiKey: process.env.FIREBASE_API_KEY || '',
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN || '',
+  projectId: process.env.FIREBASE_PROJECT_ID || '',
+  appId: process.env.FIREBASE_APP_ID || '',
+};
+function initFirebaseAuth() {
+  if (firebaseAuth) return firebaseAuth;
+  if (!process.env.FIREBASE_SERVICE_ACCOUNT || !process.env.FIREBASE_PROJECT_ID) return null;
+  try {
+    let serviceAccount;
+    try { serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT); }
+    catch { serviceAccount = JSON.parse(Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT, 'base64').toString('utf8')); }
+    const app = getApps().find(x => x.name === 'tasked-auth') || initializeApp({ credential: cert(serviceAccount), projectId: process.env.FIREBASE_PROJECT_ID }, 'tasked-auth');
+    firebaseAuth = getAuth(app);
+    return firebaseAuth;
+  } catch (e) { console.error('Firebase Admin configuration is invalid:', e.message); return null; }
+}
+app.get('/api/auth/config', (req, res) => {
+  const enabled = Boolean(firebaseWebConfig.apiKey && firebaseWebConfig.authDomain && firebaseWebConfig.projectId && firebaseWebConfig.appId && initFirebaseAuth());
+  res.json({ enabled, firebase: enabled ? firebaseWebConfig : null });
+});
+app.post('/api/auth/firebase', async (req, res) => {
+  const auth = initFirebaseAuth();
+  if (!auth) return res.status(503).json({ error: 'auth_not_configured' });
+  try {
+    const decoded = await auth.verifyIdToken(String(req.body?.idToken || ''), true);
+    const email = String(decoded.email || '').trim().toLowerCase();
+    if (!email || decoded.email_verified !== true) return res.status(403).json({ error: 'email_not_verified' });
+    const uid = String(decoded.uid);
+    const displayName = String(decoded.name || email.split('@')[0]).trim().slice(0, 60);
+    const result = await pool.query(`
+      INSERT INTO students (email, firebase_uid, email_verified, display_name)
+      VALUES ($1,$2,true,$3)
+      ON CONFLICT (LOWER(email)) WHERE email IS NOT NULL
+      DO UPDATE SET firebase_uid=EXCLUDED.firebase_uid, email_verified=true,
+        display_name=CASE WHEN students.display_name='' THEN EXCLUDED.display_name ELSE students.display_name END
+      RETURNING id, login, email, display_name`, [email, uid, displayName]);
+    const student = result.rows[0];
+    await touchActive(student.id);
+    setSession(res, { role: 'student', id: student.id, login: student.login || student.email, email: student.email, displayName: student.display_name });
+    res.json({ ok: true, role: 'student', id: student.id, login: student.login || student.email, email: student.email, displayName: student.display_name });
+  } catch (e) {
+    console.error('Firebase sign-in failed:', e.message);
+    res.status(401).json({ error: 'invalid_token' });
+  }
+});
+const normalizeEmail = value => String(value || '').trim().toLowerCase().slice(0, 254);
+function emailCodeHash(email, code) {
+  return crypto.createHmac('sha256', SECRET).update(`${email}:${code}`).digest('hex');
+}
+app.post('/api/auth/email-code/send', async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'invalid_email' });
+  if (!process.env.BREVO_API_KEY || !process.env.BREVO_SENDER_EMAIL || !initFirebaseAuth()) {
+    return res.status(503).json({ error: 'email_auth_not_configured' });
+  }
+  try {
+    await pool.query(`DELETE FROM auth_email_sends WHERE created_at < now() - interval '8 days'`);
+    const limits = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE email=$1) AS email_day,
+        COUNT(*) FILTER (WHERE request_ip=$2) AS ip_day,
+        MAX(created_at) FILTER (WHERE email=$1) AS last_email
+      FROM auth_email_sends
+      WHERE created_at > now() - interval '24 hours' AND (email=$1 OR request_ip=$2)`, [email, String(req.ip || '').slice(0, 100)]);
+    const quota = limits.rows[0];
+    if (Number(quota.email_day) >= 10 || Number(quota.ip_day) >= 30) return res.status(429).json({ error: 'email_rate_limited' });
+    if (quota.last_email && Date.now() - new Date(quota.last_email).getTime() < 60_000) return res.status(429).json({ error: 'email_wait_before_resend' });
+
+    const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+    await pool.query(`INSERT INTO auth_email_sends (email, request_ip) VALUES ($1,$2)`, [email, String(req.ip || '').slice(0, 100)]);
+    await pool.query(`INSERT INTO email_login_codes (email, code_hash, attempts, expires_at)
+      VALUES ($1,$2,0,now()+interval '10 minutes')
+      ON CONFLICT (email) DO UPDATE SET code_hash=EXCLUDED.code_hash, attempts=0, created_at=now(), expires_at=EXCLUDED.expires_at`,
+    [email, emailCodeHash(email, code)]);
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', accept: 'application/json', 'api-key': process.env.BREVO_API_KEY },
+      body: JSON.stringify({
+        sender: { name: String(process.env.BREVO_SENDER_NAME || 'Tasked').slice(0, 70), email: process.env.BREVO_SENDER_EMAIL },
+        to: [{ email }], subject: 'Код входа в Tasked',
+        textContent: `Ваш код входа в Tasked: ${code}. Он действует 10 минут. Если вы не запрашивали вход, просто проигнорируйте письмо.`,
+        htmlContent: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;padding:28px;color:#20252b"><div style="font-size:13px;letter-spacing:2px;color:#68717c">TASKED · ВХОД В АККАУНТ</div><p style="font-size:16px">Введите этот код в окне входа:</p><div style="font-size:34px;font-weight:700;letter-spacing:8px;padding:18px 20px;background:#f2f4f6;border-radius:12px;text-align:center">${code}</div><p style="color:#68717c;font-size:13px">Код действует 10 минут. Если вы не запрашивали вход, проигнорируйте это письмо.</p></div>`,
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) {
+      const details = await response.json().catch(() => ({}));
+      console.error('Brevo email send failed:', response.status, details.message || 'provider error');
+      await pool.query('DELETE FROM email_login_codes WHERE email=$1', [email]);
+      await pool.query(`DELETE FROM auth_email_sends WHERE id=(SELECT id FROM auth_email_sends WHERE email=$1 ORDER BY id DESC LIMIT 1)`, [email]);
+      return res.status(502).json({ error: 'email_send_failed' });
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Email code request failed:', e.message);
+    res.status(503).json({ error: 'email_send_failed' });
+  }
+});
+app.post('/api/auth/email-code/verify', async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  const code = String(req.body?.code || '').trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^\d{6}$/.test(code)) return res.status(400).json({ error: 'invalid_code' });
+  const auth = initFirebaseAuth();
+  if (!auth) return res.status(503).json({ error: 'email_auth_not_configured' });
+  try {
+    const challenge = (await pool.query(`UPDATE email_login_codes SET attempts=attempts+1
+      WHERE email=$1 AND expires_at>now() AND attempts<5 RETURNING code_hash, attempts`, [email])).rows[0];
+    if (!challenge) return res.status(401).json({ error: 'invalid_or_expired_code' });
+    const expected = Buffer.from(challenge.code_hash, 'hex');
+    const actual = Buffer.from(emailCodeHash(email, code), 'hex');
+    if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) {
+      if (challenge.attempts >= 5) await pool.query('DELETE FROM email_login_codes WHERE email=$1', [email]);
+      return res.status(401).json({ error: 'invalid_or_expired_code' });
+    }
+    let user;
+    try { user = await auth.getUserByEmail(email); }
+    catch (e) {
+      if (e.code !== 'auth/user-not-found') throw e;
+      user = await auth.createUser({ email, emailVerified: true, displayName: email.split('@')[0].slice(0, 60) });
+    }
+    if (!user.emailVerified) user = await auth.updateUser(user.uid, { emailVerified: true });
+    const customToken = await auth.createCustomToken(user.uid);
+    await pool.query('DELETE FROM email_login_codes WHERE email=$1', [email]);
+    res.json({ ok: true, customToken });
+  } catch (e) {
+    console.error('Email code verification failed:', e.message);
+    res.status(503).json({ error: 'email_auth_failed' });
+  }
+});
 function setSession(res, payload) {
   const local = (process.env.DATABASE_URL || '').includes('localhost');
   res.cookie('session', sign(payload), { httpOnly: true, sameSite: 'lax', secure: !local, maxAge: 30 * 24 * 3600 * 1000 });
@@ -228,35 +389,8 @@ function gradeNumber(task, answer) {
 }
 
 // ---------- student auth ----------
-app.post('/api/auth/student/register', async (req, res) => {
-  const login = normLogin(req.body?.login).toLowerCase();
-  const password = String(req.body?.password || '');
-  const displayName = String(req.body?.name || '').slice(0, 60);
-  if (!LOGIN_RE.test(login)) return res.status(400).json({ error: 'login_taken_or_invalid' });
-  if (password.length < 4) return res.status(400).json({ error: 'password_too_short' });
-  try {
-    const hash = await bcrypt.hash(password, 10);
-    const r = await pool.query(
-      'INSERT INTO students (login, password_hash, display_name) VALUES ($1,$2,$3) RETURNING id, login',
-      [login, hash, displayName || login]
-    );
-    setSession(res, { role: 'student', id: r.rows[0].id, login: r.rows[0].login });
-    res.json({ ok: true, login: r.rows[0].login });
-  } catch {
-    res.status(409).json({ error: 'login_taken' });
-  }
-});
-
-app.post('/api/auth/student/login', async (req, res) => {
-  const login = normLogin(req.body?.login).toLowerCase();
-  const r = await pool.query('SELECT * FROM students WHERE login=$1', [login]);
-  const u = r.rows[0];
-  if (!u || !(await bcrypt.compare(String(req.body?.password || ''), u.password_hash)))
-    return res.status(401).json({ error: 'bad_credentials' });
-  await touchActive(u.id);
-  setSession(res, { role: 'student', id: u.id, login: u.login });
-  res.json({ ok: true, login: u.login });
-});
+app.post('/api/auth/student/register', (req, res) => res.status(410).json({ error: 'password_auth_removed' }));
+app.post('/api/auth/student/login', (req, res) => res.status(410).json({ error: 'password_auth_removed' }));
 
 // ---------- teacher auth (login or email) ----------
 app.post('/api/auth/teacher/register', async (req, res) => {
@@ -568,7 +702,7 @@ app.get('/api/classes/:id/board', async (req, res) => {
     (s.role === 'student' && (await pool.query('SELECT id FROM class_members WHERE class_id=$1 AND student_id=$2', [c.id, s.id])).rows.length);
   if (!allowed) return res.status(403).json({ error: 'forbidden' });
   const r = await pool.query(`
-    SELECT s.login, COALESCE(NULLIF(s.display_name,''), s.login) AS name, s.xp, s.streak_days
+    SELECT COALESCE(s.login,s.email) AS login, COALESCE(NULLIF(s.display_name,''), s.login, s.email) AS name, s.xp, s.streak_days
     FROM class_members m JOIN students s ON s.id=m.student_id
     WHERE m.class_id=$1 ORDER BY s.xp DESC LIMIT 50`, [c.id]);
   res.json(r.rows.map(x => ({ ...x, level: levelOf(x.xp) })));
@@ -576,7 +710,7 @@ app.get('/api/classes/:id/board', async (req, res) => {
 
 // ---------- student cabinet ----------
 app.get('/api/me/overview', authStudent, async (req, res) => {
-  const u = (await pool.query('SELECT id, login, display_name, xp, streak_days FROM students WHERE id=$1', [req.user.id])).rows[0];
+  const u = (await pool.query('SELECT id, COALESCE(login,email) AS login, display_name, xp, streak_days FROM students WHERE id=$1', [req.user.id])).rows[0];
   if (!u) return res.status(404).json({ error: 'not found' });
   const rows = await pool.query(`
     SELECT DISTINCT ON (t.id) t.id AS topic_id, t.title, p.score, p.attempts, p.completed, p.updated_at
@@ -607,7 +741,7 @@ app.get('/api/teacher/export.csv', authTeacher, async (req, res) => {
     r.rows.map(x => [x.title, x.student_key, x.score, x.attempts, x.completed ? 'да' : 'нет', x.updated_at]));
 });
 app.get('/api/student/export.csv', authStudent, async (req, res) => {
-  const u = (await pool.query('SELECT login FROM students WHERE id=$1', [req.user.id])).rows[0];
+  const u = (await pool.query('SELECT COALESCE(login,email) AS login FROM students WHERE id=$1', [req.user.id])).rows[0];
   const r = await pool.query(`
     SELECT t.title, p.score, p.attempts, p.completed, p.updated_at
     FROM progress p JOIN topics t ON t.id=p.topic_id
@@ -616,108 +750,118 @@ app.get('/api/student/export.csv', authStudent, async (req, res) => {
     r.rows.map(x => [x.title, x.score, x.attempts, x.completed ? 'да' : 'нет', x.updated_at]));
 });
 
-// ---------- Mistral AI (bilingual RU/KK) ----------
-const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'ministral-14b-latest';
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+// ---------- Gemini AI (bilingual RU/KK) ----------
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 
-async function mistralChat(body, maxTokens = 700) {
-  const models = [MISTRAL_MODEL, 'ministral-8b-latest'];
-  let lastErr;
-  for (const model of models) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 45000);
-      try {
-        const resp = await fetch('https://api.mistral.ai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
-          },
-          body: JSON.stringify({ ...body, model, max_tokens: body.max_tokens || maxTokens }),
-          signal: ctrl.signal,
-        });
-        clearTimeout(timer);
-        if (resp.ok) {
-          const data = await resp.json();
-          return data.choices[0].message.content;
-        }
-        lastErr = new Error(`Mistral API ${resp.status}: ${await resp.text()}`);
-        const retryable = resp.status === 429 || resp.status >= 500;
-        if (!retryable) throw lastErr;
-      } catch (e) {
-        clearTimeout(timer);
-        lastErr = e;
-      }
-      await sleep(1000 * (attempt + 1));
+async function geminiChat(messages, maxTokens = 900, json = false) {
+  if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is not configured');
+  const systemInstruction = messages.find(m => m.role === 'system')?.content || '';
+  const contents = messages.filter(m => m.role !== 'system').map(m => ({
+    role: m.role === 'assistant' || m.role === 'model' ? 'model' : 'user',
+    parts: [{ text: String(m.content || '') }],
+  }));
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemInstruction }] },
+        contents,
+        generationConfig: {
+          temperature: json ? 0.25 : 0.45,
+          maxOutputTokens: maxTokens,
+          ...(json ? { responseMimeType: 'application/json' } : {}),
+          thinkingConfig: { thinkingLevel: 'medium' },
+        },
+      }),
+      signal: ctrl.signal,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = payload.error?.message || `Gemini API ${response.status}`;
+      throw new Error(detail.slice(0, 240));
     }
+    const text = payload.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('').trim();
+    if (!text) throw new Error('Gemini returned an empty response');
+    return text;
+  } finally { clearTimeout(timer); }
+}
+
+async function geminiJson(messages, maxTokens = 900) {
+  const content = await geminiChat(messages, maxTokens, true);
+  const start = content.indexOf('{'), end = content.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error('Gemini returned invalid JSON');
+  return JSON.parse(content.slice(start, end + 1));
+}
+
+const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
+const lessonVisualCache = new Map();
+let lessonVisualCacheBytes = 0;
+app.post('/api/ai/visual', authStudent, async (req, res) => {
+  if (process.env.GEMINI_IMAGE_ENABLED !== 'true') return res.status(503).json({ error: 'gemini_image_requires_paid_opt_in' });
+  const prompt = String(req.body?.prompt || '').trim().slice(0, 1400);
+  if (!prompt) return res.status(400).json({ error: 'prompt_required' });
+  if (!process.env.GEMINI_API_KEY) return res.status(503).json({ error: 'gemini_not_configured' });
+  const cacheKey = crypto.createHash('sha256').update(prompt).digest('hex');
+  const cached = lessonVisualCache.get(cacheKey);
+  if (cached) {
+    res.set({ 'Content-Type': cached.mimeType, 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff' });
+    return res.send(cached.bytes);
   }
-  throw lastErr;
-}
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_IMAGE_MODEL)}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: `Create one accurate school-learning visual based on this description. Use a calm textbook illustration style, clean composition, no neon, no logos, no decorative lettering, and do not reveal or add a solution. Keep diagrams scientifically and mathematically accurate. Description: ${prompt}` }] }],
+        generationConfig: { responseModalities: ['IMAGE'] },
+      }),
+      signal: ctrl.signal,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error?.message || `Gemini image API ${response.status}`);
+    const part = payload.candidates?.[0]?.content?.parts?.find(item => item.inlineData?.data || item.inline_data?.data);
+    const image = part?.inlineData || part?.inline_data;
+    const mimeType = String(image?.mimeType || image?.mime_type || 'image/png');
+    if (!image?.data || !['image/png', 'image/jpeg', 'image/webp'].includes(mimeType)) throw new Error('Gemini returned no supported image');
+    const bytes = Buffer.from(image.data, 'base64');
+    if (!bytes.length || bytes.length > 8 * 1024 * 1024) throw new Error('Gemini image has an invalid size');
+    if (bytes.length <= 3 * 1024 * 1024) {
+      lessonVisualCache.set(cacheKey, { bytes, mimeType });
+      lessonVisualCacheBytes += bytes.length;
+      while (lessonVisualCacheBytes > 24 * 1024 * 1024 && lessonVisualCache.size) {
+        const oldest = lessonVisualCache.keys().next().value;
+        lessonVisualCacheBytes -= lessonVisualCache.get(oldest).bytes.length;
+        lessonVisualCache.delete(oldest);
+      }
+    }
+    res.set({ 'Content-Type': mimeType, 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff' });
+    res.send(bytes);
+  } catch (error) {
+    console.error('Lesson image generation failed', String(error.message || error).slice(0, 240));
+    res.status(502).json({ error: 'visual_unavailable' });
+  } finally { clearTimeout(timer); }
+});
 
-async function mistral(messages) {
-  const content = await mistralChat({
-    messages,
-    temperature: 0.4,
-    response_format: { type: 'json_object' },
-  });
-  const m = content.match(/\{[\s\S]*\}/);
-  return JSON.parse(m ? m[0] : content);
-}
+const SYSTEM_RU = `Ты — сильный школьный учитель и автор интерактивных уроков. Пиши только по-русски, простыми точными словами, без эмодзи, сюсюканья и длинных лекций. Урок должен ощущаться как живое занятие: короткая мысль → наглядный пример → действие ученика → конкретная обратная связь.
+ПЕРВЫЙ ХОД: создай понятное объяснение темы в теории: короткий цепляющий заход, 2–4 маленьких смысловых блока с заголовками, один разобранный пример и вопрос-переход к практике. Не пересказывай учебник абзацами. Используй аналогию или бытовой контекст, только если они точны.
+КАЖДЫЙ ХОД: придумай одно новое задание по теме, лучше в содержательном контексте (эксперимент, мини-ситуация, выбор стратегии, ошибка персонажа, наблюдение за рисунком/схемой). Меняй форматы: choice (ровно 4 варианта и только один правильный), true_false, order (3–5 элементов и понятный критерий порядка), match (3–4 однозначные пары без повторов), short (короткий ответ). Не повторяй один формат два раза подряд, кроме повторной отработки после ошибки. Для каждого формата заполни соответствующие поля: options, items или pairs. В задании ровно одна понятная цель; вопрос должен иметь проверяемый ответ. Для short формулируй вопрос так, чтобы ответ был коротким и однозначным.
+ВИЗУАЛЫ: на первом ходе подготовь theoryVisualPrompt для учебной иллюстрации, помогающей понять теорию, и visualPrompt для задания. На каждом следующем ходе подготовь visualPrompt, если задача становится понятнее с предметным рисунком, схемой, картой, шкалой, таблицей или ситуационной сценой; по возможности визуализируй каждое задание. Промпт должен описывать один чёткий учебный кадр, спокойную книжную иллюстрацию/инфографику без неона, без декоративного текста и без готового ответа. Само задание должно содержать все точные подписи/числа, нужные для решения: не полагайся на надписи внутри изображения. Добавь короткие подписи к изображениям. Не используй случайные стоковые сцены вместо точной учебной визуализации.
+ПРОВЕРКА: оцени только последний ответ по последнему заданию и его формату. Допускай эквивалентные записи и ясные мелкие опечатки. Будь строгим к смыслу, но не к способу записи. feedback кратко говорит, что понял ученик, и что поправить; при верном ответе объясни почему это верно, а не просто хвали.
+АДАПТАЦИЯ: уровень 1–5 дан во входе. После ошибки объясни слабое место и дай на том же навыке другую, проще устроенную задачу. После верного ответа проверь перенос навыка в новый контекст, затем постепенно усложняй. Веди журнал последних форматов и не повторяй предыдущий тип без причины. Не перескакивай с темы.
+НЕ ЗАВЕРШАЙ УРОК САМОСТОЯТЕЛЬНО. Верни только валидный JSON с полями: {"theory":"короткий лид, только в начале","theoryBlocks":[{"title":"...","text":"..."}],"theoryVisualPrompt":"...","theoryVisualCaption":"...","feedback":"...","task":"...","taskType":"choice|true_false|order|match|short","options":["..."],"items":["..."],"pairs":[{"left":"...","right":"..."}],"visualPrompt":"...","visualCaption":"...","correct":true|false|null}. Неиспользуемые массивы верни пустыми; на первом ходе correct=null и feedback пустой.`;
 
-async function mistralTheory(topic, lang) {
-  const sys = lang === 'kk'
-    ? 'Сен — мейірімді мұғалімсің. Тақырыпты қазақ тілінде, қарапайым сөзбен, 5-8 сөйлеммен, тұрмыстық мысалмен түсіндір. Тек түсіндіру мәтінін жаз.'
-    : 'Ты — добрый учитель. Объясни тему на русском простыми словами, 5-8 предложений, с бытовым примером. Напиши только текст объяснения.';
-  return mistralChat({
-    messages: [
-      { role: 'system', content: sys },
-      { role: 'user', content: `Тема: «${topic.title}». ${topic.description || ''}` },
-    ],
-    temperature: 0.4,
-  }, 500);
-}
-
-const SYSTEM_RU = `Ты — добрый, поддерживающий учитель-репетитор. Работай СТРОГО на русском языке, простыми словами.
-
-ТЕОРИЯ: при первом ходе объясни тему коротко (5-8 предложений), с бытовым примером, без сложных терминов.
-
-ЗАДАНИЯ — давай ПО ОДНОМУ и соблюдай правила:
-• Задание должно быть конкретным и иметь ОДНОЗНАЧНЫЙ короткий ответ (число, слово, дата, выбор варианта). Не давай "объясните своими словами", "приведите примеры" — такие ответы невозможно проверить.
-• Начинай с ОЧЕНЬ простых заданий (уровень 5 класса, устный счёт). Уровень повышай ТОЛЬКО если ученик отвечает верно, и повышай медленно — на полшага.
-• Не задавай несколько вопросов в одном задании.
-
-ПРОВЕРКА ОТВЕТА — будь лояльным:
-• Засчитывай ответ верным, если он правильный ПО СМЫСЛУ: другая форма записи (2/4 = 0.5 = 1/2), опечатка, без единиц измерения, с лишней вежливостью — всё это ПРАВИЛЬНЫЙ ответ.
-• При неполной ошибке не объявляй "неверно" сразу: сделай наводящую подсказку в feedback и оставь correct=false только при явной ошибке.
-• feedback — всегда доброжелательный: сначала похвала за то, что получилось, потом мягкое объяснение ошибки.
-
-ЗАВЕРШЕНИЕ УРОКА: если ученик ответил верно 5 раз подряд — заверши урок: поставь task = "" и напиши в feedback тёплую итоговую похвалу с мини-резюме того, чему он научился.
-
-АДАПТАЦИЯ: каждое следующее задание подстраивай под предыдущий ответ: ошибка → проще на то же слабое место + объяснение; верно → чуть сложнее (максимум на один уровень).
-
-Ты отвечаешь ИСКЛЮЧИТЕЛЬНО валидным JSON вида:
-{ "theory": "краткое объяснение темы (только при первом ходе, иначе пустая строка)", "feedback": "комментарий по предыдущему ответу ученика, '' если это самое начало", "task": "текст нового задания (пустая строка, если урок завершён)", "correct": true | false | null }
-Поле "correct" — результат ПРЕДЫДУЩЕГО ответа ученика (true/false), в самом первом ходе null.`;
-
-const SYSTEM_KK = `Сен — мейірімді, қолдайтын мұғалім-репетиторсың. ҚАТАҢ түрде қазақ тілінде, қарапайым сөздермен жұмыс істе.
-
-ТЕОРИЯ: бірінші қадамда тақырыпты қысқаша түсіндір (5-8 сөйлем), тұрмыстық мысалмен, күрделі терминдерсіз.
-
-ТАПСЫРМАЛАР — БІР-БІРДЕН бер және ережелерді сақта:
-• Тапсырма нақты және БІР АНЫҚ қысқа жауабы болуы керек (сан, сөз, күн, нұсқа таңдау).
-• ӨТЕ оңай тапсырмалардан баста (5-сынып деңгейі). Деңгейді ТЕК оқушы дұрыс жауап берсе, баяу көтер.
-• Бір тапсырмада бірнеше сұрақ қойма.
-
-ЖАУАП ТЕКСЕРУ — адал бол:
-• Жауап МАҒЫНАСЫ бойынша дұрыс болса, дұрыс деп есепте.
-• feedback — әрдайым мейірімді: алдымен мақтау, сосын қатені жұмсақ түсіндіру.
-
-САБАҚТЫ АЯҚТАУ: егер оқушы қатарынан 5 рет дұрыс жауап берсе — сабақты аяқта: task = "" қой және feedback-ке жылы қорытынды мақтау жаз.
-
-Сен ТЕК мына валидті JSON түрінде жауап бересің:
-{ "theory": "тақырыпты қысқа түсіндіру (тек бірінші қадамда, әйтпесе бос жол)", "feedback": "оқушының алдыңғы жауабына пікір, ең басында ''", "task": "жаңа тапсырма мәтіні (сабақ аяқталса бос жол)", "correct": true | false | null }
-"correct" өрісі — оқушының АЛДЫҢҒЫ жауабының нәтижесі (true/false), ең бірінші қадамда null.`;
+const SYSTEM_KK = `Сен — тәжірибелі мектеп мұғалімі әрі интерактивті сабақ авторысың. Тек қазақша жаз, қарапайым әрі нақты тіл қолдан; эмодзи, еркелету сөздері мен ұзақ дәрістен аулақ бол. Сабақ тірі сабақтай сезілсін: қысқа ой → көрнекі мысал → оқушы әрекеті → нақты кері байланыс.
+БІРІНШІ ҚАДАМ: қысқа қызықты кіріспе, 2–4 шағын мағыналық блок, шешуі көрсетілген бір мысал және практикаға өтетін сұрақ дайында. Оқулықты ұзақ абзацпен көшірме. Ұқсастыру не күнделікті мысал тақырыпты дәл түсіндірсе ғана қолдан.
+ӘР ҚАДАМДА: тақырыпқа сай жаңа тапсырма құрастыр; тәжірибе, шағын жағдай, стратегия таңдау, кейіпкер қатесін табу немесе сурет/сызбаны бақылау сияқты мағыналы контекст таңда. Форматтарды алмастыр: choice (дәл 4 нұсқа, біреуі ғана дұрыс), true_false, order (3–5 элемент және анық рет шарты), match (қайталанбайтын 3–4 бірмәнді жұп), short (қысқа жауап). Қате жауапты түзету қажет болмаса, бір форматты қатарынан қайталама. Тиісті options, items немесе pairs өрістерін толтыр. Бір тапсырмада бір ғана анық мақсат және тексерілетін жауап болсын.
+КӨРНЕКІ МАТЕРИАЛ: бірінші қадамда теорияны ашатын theoryVisualPrompt және тапсырмаға арналған visualPrompt дайында. Кейінгі қадамда пәндік сурет, сызба, карта, шкала, кесте не жағдай көрінісі түсінуге көмектессе visualPrompt бер; мүмкін болса әр тапсырманы көрнекі ет. Бір нақты оқу көрінісін сипатта; сабырлы оқулық иллюстрациясы/инфографикасы болсын, неонсыз, сәндік жазусыз және дайын жауапсыз. Шешуге керекті нақты атаулар мен сандар тапсырма мәтінінде болсын — суреттегі жазуға тәуелді болма. Қысқа сурет сипаттамасын да бер. Дәл пәндік көрнекіліктің орнына кездейсоқ фотосурет ұсынба.
+ТЕКСЕРУ: тек соңғы жауапты соңғы тапсырма және оның форматы бойынша бағала. Мағынасы бірдей жазылым мен түсінікті ұсақ қатені қабылда. Мағынаға мұқият бол, жазу тәсіліне емес. feedback оқушының нені түсінгенін және нені түзету керегін қысқаша айтсын; дұрыс болса, неге дұрыс екенін түсіндір.
+БЕЙІМДЕУ: кірісте 1–5 деңгей беріледі. Қате болса, әлсіз тұсты түсіндіріп, сол дағдыға басқа әрі жеңіл тапсырма бер. Дұрыс болса, дағдыны жаңа жағдайда тексеріп, кейін біртіндеп күрделендір. Соңғы форматтарды қарап, себепсіз бір типті қайталама. Тақырыптан ауытқыма.
+Сабақты өз бетіңше аяқтама. Тек валидті JSON қайтар: {"theory":"қысқа кіріспе, тек басында","theoryBlocks":[{"title":"...","text":"..."}],"theoryVisualPrompt":"...","theoryVisualCaption":"...","feedback":"...","task":"...","taskType":"choice|true_false|order|match|short","options":["..."],"items":["..."],"pairs":[{"left":"...","right":"..."}],"visualPrompt":"...","visualCaption":"...","correct":true|false|null}. Қолданылмайтын массивтер бос болсын; бірінші қадамда correct=null, feedback бос.`;
 
 const SYSTEM_VOICE = {
   ru: 'Ты — спокойный и внимательный учитель-репетитор. Отвечай на русском, без эмодзи, уменьшительных слов и лишних вступлений. Сначала прямо ответь на вопрос ученика, затем при необходимости объясни одним простым примером. Держи ответ в пределах 2–4 коротких предложений и не повторяй вопрос.',
@@ -733,6 +877,83 @@ function parseTeacherEntries(history) {
   return out;
 }
 
+function masteryState(outcomes) {
+  const recent = outcomes.slice(-8);
+  const correct = recent.filter(Boolean).length;
+  const accuracy = recent.length ? correct / recent.length : 0;
+  const lastThreeCorrect = outcomes.slice(-3).filter(Boolean).length;
+  const mastered = outcomes.length >= 6 && recent.length >= 6 && accuracy >= 0.75 && lastThreeCorrect >= 2;
+  const progress = Math.round(Math.min(1, outcomes.length / 6) * Math.min(1, accuracy / 0.75) * 100);
+  return {
+    mastery: mastered ? 100 : Math.min(95, progress),
+    answered: outcomes.length,
+    mastered,
+  };
+}
+
+function targetDifficulty(entries, correct) {
+  const last = entries[entries.length - 1];
+  const current = Number(last?.difficulty) || 1;
+  if (correct === null) return Math.max(1, Math.min(5, current));
+  const change = correct ? 0.5 : -0.75;
+  return Math.max(1, Math.min(5, Math.round((current + change) * 2) / 2));
+}
+
+const TASK_FORMATS = ['choice', 'true_false', 'match', 'order', 'short'];
+function normalizeLessonTurn(value, firstTurn) {
+  const ai = value && typeof value === 'object' ? value : {};
+  const text = (input, max) => typeof input === 'string' ? input.trim().slice(0, max) : '';
+  let taskType = TASK_FORMATS.includes(ai.taskType) ? ai.taskType : 'short';
+  const options = Array.isArray(ai.options) ? ai.options.map(x => text(x, 180)).filter(Boolean).slice(0, 6) : [];
+  const items = Array.isArray(ai.items) ? ai.items.map(x => text(x, 180)).filter(Boolean).slice(0, 6) : [];
+  const pairs = Array.isArray(ai.pairs) ? ai.pairs.slice(0, 5).map(x => ({ left: text(x?.left, 160), right: text(x?.right, 160) })).filter(x => x.left && x.right) : [];
+  if (taskType === 'choice' && options.length < 2) taskType = 'short';
+  if (taskType === 'order' && items.length < 3) taskType = 'short';
+  if (taskType === 'match' && pairs.length < 2) taskType = 'short';
+  const theoryBlocks = firstTurn && Array.isArray(ai.theoryBlocks)
+    ? ai.theoryBlocks.slice(0, 4).map(x => ({ title: text(x?.title, 100), text: text(x?.text, 500) })).filter(x => x.title || x.text)
+    : [];
+  return {
+    theory: firstTurn ? text(ai.theory, 700) : '',
+    theoryBlocks,
+    theoryVisualPrompt: firstTurn ? text(ai.theoryVisualPrompt, 1400) : '',
+    theoryVisualCaption: firstTurn ? text(ai.theoryVisualCaption, 240) : '',
+    feedback: text(ai.feedback, 1000),
+    task: text(ai.task, 1400),
+    taskType,
+    options: taskType === 'choice' ? options : [],
+    items: taskType === 'order' ? items : [],
+    pairs: taskType === 'match' ? pairs : [],
+    visualPrompt: text(ai.visualPrompt, 1400),
+    visualCaption: text(ai.visualCaption, 240),
+    correct: typeof ai.correct === 'boolean' ? ai.correct : null,
+  };
+}
+
+async function adaptiveTurn({ topic, lang, history, answer, difficulty, firstTurn, teacherExamples = [] }) {
+  const previousTaskEntry = [...parseTeacherEntries(history)].reverse().find(entry => entry.task);
+  const priorOutcomes = parseTeacherEntries(history).filter(entry => typeof entry.correct === 'boolean').map(entry => entry.correct);
+  const previousType = previousTaskEntry?.taskType;
+  const preferredType = previousType && TASK_FORMATS.includes(previousType)
+    ? TASK_FORMATS[(TASK_FORMATS.indexOf(previousType) + 1) % TASK_FORMATS.length]
+    : TASK_FORMATS[0];
+  const context = history.slice(-16).map(item => ({
+    role: item.role,
+    text: item.role === 'teacher' ? (() => { try { const v = JSON.parse(item.text); return JSON.stringify({ task: v.task, taskType: v.taskType, options: v.options, items: v.items, pairs: v.pairs, feedback: v.feedback, correct: v.correct, difficulty: v.difficulty }); } catch { return ''; } })() : String(item.text || '').slice(0, 500),
+  }));
+  const teacherReference = String(topic.theory_override || '').slice(0, 2000);
+  const examples = teacherExamples.slice(0, 8).map(item => ({
+    prompt: String(item.prompt || '').slice(0, 240), kind: String(item.kind || '').slice(0, 30),
+    answer: String(item.answer || '').slice(0, 120),
+    options: Array.isArray(item.options) ? item.options.slice(0, 6).map(x => String(x).slice(0, 100)) : [],
+  }));
+  const prompt = `Тема: ${String(topic.title || '').slice(0, 300)}\nОписание учителя: ${String(topic.description || '').slice(0, 1000)}\nМатериал учителя для точности: ${teacherReference || 'не задан'}\nПримеры заданий учителя для понимания охвата темы (не копируй дословно; сам придумай новое): ${JSON.stringify(examples)}\nПредпочтительный формат этого задания: ${preferredType}.\nТекущий уровень сложности: ${difficulty} из 5. После правильного ответа немного усложни следующее задание; после ошибки упрости и закрепи тот же навык.\nЧисло проверенных ответов до текущего: ${priorOutcomes.length}.\nПредыдущий вопрос: ${String(previousTaskEntry?.task || 'это начало урока').slice(0, 600)}\nОтвет ученика сейчас: ${answer === null ? 'ответа ещё не было' : String(answer).slice(0, 1000)}\nКонтекст последних ходов: ${JSON.stringify(context)}\n\nСформируй следующий ход. theory и theoryBlocks заполни только в первый ход (${firstTurn}); иначе оставь пустую строку и пустой массив. correct оцени ответ сейчас (${answer === null ? 'null, это начало' : 'true или false'}). feedback относится только к этому ответу. task всегда должен быть новым заданием; соблюдай предпочтительный формат, если он подходит теме. Не завершай урок самостоятельно.`;
+  return geminiJson([
+    { role: 'system', content: lang === 'kk' ? SYSTEM_KK : SYSTEM_RU },
+    { role: 'user', content: prompt },
+  ], 1100);
+}
+
 async function saveProgress(prog, history, topicId, studentKey, studentId) {
   // score = number of correct answers (not teacher turns)
   let score = 0;
@@ -742,10 +963,10 @@ async function saveProgress(prog, history, topicId, studentKey, studentId) {
   }
   await pool.query(
     'UPDATE progress SET history=$1::jsonb, score=$2, attempts=attempts+1, updated_at=now(), student_id=COALESCE(student_id,$4) WHERE id=$3',
-    [JSON.stringify(history.slice(-40)), score, prog.id, studentId]);
+    [JSON.stringify(history.slice(-80)), score, prog.id, studentId]);
 }
 
-app.post('/api/ai/turn', async (req, res) => {
+app.post('/api/ai/turn', authStudent, async (req, res) => {
   let { topicId, studentKey, answer } = req.body || {};
   const lang = req.body?.lang === 'kk' ? 'kk' : 'ru';
   const sess = session(req);
@@ -756,9 +977,14 @@ app.post('/api/ai/turn', async (req, res) => {
   }
   if (!topicId || !studentKey) return res.status(400).json({ error: 'bad_request' });
   studentKey = String(studentKey).slice(0, 120);
+  const hasAnswer = answer !== undefined && answer !== null && answer !== '';
+  const answerText = hasAnswer
+    ? (typeof answer === 'string' ? answer.slice(0, 2000) : JSON.stringify(answer).slice(0, 2000))
+    : null;
 
   const topic = (await pool.query('SELECT * FROM topics WHERE id=$1', [topicId])).rows[0];
   if (!topic) return res.status(404).json({ error: 'topic_not_found' });
+  const teacherExamples = (await pool.query('SELECT kind, prompt, answer, options FROM tasks WHERE topic_id=$1 ORDER BY id LIMIT 8', [topicId])).rows;
 
   let prog = (await pool.query('SELECT * FROM progress WHERE topic_id=$1 AND student_key=$2', [topicId, studentKey])).rows[0];
   if (!prog) {
@@ -770,114 +996,72 @@ app.post('/api/ai/turn', async (req, res) => {
   const history = prog.history || [];
   const teacherEntries = parseTeacherEntries(history);
   const firstTurn = teacherEntries.length === 0;
-
-  // bank tasks for this topic
-  const bank = (await pool.query('SELECT * FROM tasks WHERE topic_id=$1 ORDER BY id', [topicId])).rows;
-  const usedBankIds = new Set(teacherEntries.map(e => e.bankTaskId).filter(Boolean));
-  const nextBank = bank.find(t => !usedBankIds.has(t.id)) || null;
-
-  const finish = async (ai) => {
-    history.push({ role: 'teacher', text: JSON.stringify(ai) });
-    await saveProgress(prog, history, topicId, studentKey, studentId);
-    await pool.query('UPDATE progress SET completed=true WHERE id=$1', [prog.id]);
-    await awardXp(studentId, 50);
-    res.json(ai);
-  };
-
-  if (answer) {
-    history.push({ role: 'student', text: String(answer).slice(0, 2000) });
+  const outcomes = teacherEntries.filter(e => typeof e.correct === 'boolean').map(e => e.correct);
+  const currentMastery = masteryState(outcomes);
+  if (prog.completed) {
+    return res.json({
+      theory: '', theoryBlocks: [], theoryVisualPrompt: '', visualPrompt: '',
+      feedback: DONE_MSG[lang], task: '', correct: null, taskType: 'short',
+      difficulty: Number(teacherEntries[teacherEntries.length - 1]?.difficulty) || 1,
+      ...currentMastery, mastered: true, alreadyCompleted: true,
+    });
   }
-
-  // ---- path 1: grade a pending bank task locally (no LLM) ----
-  const lastT = teacherEntries[teacherEntries.length - 1];
-  if (answer && lastT && lastT.bankTaskId && lastT.graded !== true) {
-    const task = bank.find(t => t.id === lastT.bankTaskId);
-    let correct = false;
-    if (task) {
-      correct = task.kind === 'number' ? gradeNumber(task, answer) : gradeChoice(task, answer);
-    }
-    const praise = PRAISE[lang][Math.floor(Math.random() * PRAISE[lang].length)];
-    const feedback = correct ? praise : MISS[lang](task ? task.answer : '—');
-    if (correct) await awardXp(studentId, 10);
-    else await touchActive(studentId);
-    const next = bank.filter(t => t.id !== lastT.bankTaskId && !usedBankIds.has(t.id))[0] || null;
-    if (!next) {
-      return finish({ theory: '', feedback: feedback + ' ' + DONE_MSG[lang], task: '', correct, taskKind: 'text' });
-    }
-    const ai = {
-      theory: '', feedback, task: next.prompt, correct,
-      taskKind: next.kind, options: next.kind === 'choice' ? next.options : [],
-      bankTaskId: next.id, graded: false,
-    };
-    history.push({ role: 'teacher', text: JSON.stringify(ai) });
-    await saveProgress(prog, history, topicId, studentKey, studentId);
-    return res.json(ai);
+  if (!hasAnswer && !firstTurn) {
+    const latest = teacherEntries[teacherEntries.length - 1];
+    const first = teacherEntries[0];
+    return res.json({
+      ...latest,
+      taskType: latest.taskType || (latest.taskKind === 'choice' ? 'choice' : 'short'),
+      theory: first.theory || '', theoryBlocks: first.theoryBlocks || [],
+      theoryVisualPrompt: first.theoryVisualPrompt || '', theoryVisualCaption: first.theoryVisualCaption || '',
+      mastery: currentMastery.mastery, answered: currentMastery.answered,
+      mastered: false, resumed: true,
+    });
   }
-
-  // ---- path 2: first turn in bank mode — LLM theory + first bank task ----
-  if (firstTurn && nextBank) {
-    let theory = '';
-    try { theory = await mistralTheory(topic, lang); }
-    catch (e) { console.error('theory LLM failed', e.message); }
-    if (topic.theory_override) theory = topic.theory_override;
-    await touchActive(studentId);
-    const ai = {
-      theory, feedback: '', task: nextBank.prompt, correct: null,
-      taskKind: nextBank.kind, options: nextBank.kind === 'choice' ? nextBank.options : [],
-      bankTaskId: nextBank.id, graded: false,
-    };
-    history.push({ role: 'teacher', text: JSON.stringify(ai) });
-    await saveProgress(prog, history, topicId, studentKey, studentId);
-    return res.json(ai);
-  }
-
-  // ---- path 3: adaptive LLM flow ----
-  let streak = 0;
-  for (let i = history.length - 1; i >= 0; i--) {
-    const h = history[i];
-    if (h.role !== 'teacher') break;
-    try { const j = JSON.parse(h.text); if (j.correct === true) streak++; else break; } catch { break; }
-  }
-
-  const finishHint = streak >= 5
-    ? (lang === 'kk'
-      ? ' Оқушы тақырыпты сенімді меңгерді — САБАҚТЫ АЯҚТА (task = "", feedback-ке жылы қорытынды мақтау).'
-      : ' Ученик уверенно освоил тему — ЗАВЕРШИ урок (task = "", тёплая итоговая похвала в feedback).')
-    : '';
-
-  const messages = [
-    { role: 'system', content: lang === 'kk' ? SYSTEM_KK : SYSTEM_RU },
-    { role: 'user', content: `Тема урока: «${topic.title}». ${topic.description ? 'Описание от учителя: ' + topic.description : ''}\nВерных ответов подряд: ${streak}.${finishHint}\n\nИстория диалога:\n${JSON.stringify(history.slice(-10), null, 2)}\n\nДай JSON-ответ.` },
-  ];
+  if (hasAnswer) history.push({ role: 'student', text: answerText });
 
   try {
-    const ai = await mistral(messages);
-    ai.taskKind = 'text';
-    if (firstTurn && topic.theory_override) ai.theory = topic.theory_override;
-    // teacher bank overrides adaptive task (but never resurrects a finished lesson)
-    if (ai.task && nextBank) {
-      ai.task = nextBank.prompt;
-      ai.taskKind = nextBank.kind;
-      ai.options = nextBank.kind === 'choice' ? nextBank.options : [];
-      ai.bankTaskId = nextBank.id;
-      ai.graded = false;
+    const generated = await adaptiveTurn({
+      topic, lang, history, answer: answerText,
+      difficulty: targetDifficulty(teacherEntries, null), firstTurn, teacherExamples,
+    });
+    const ai = normalizeLessonTurn(generated, firstTurn);
+    ai.correct = hasAnswer ? ai.correct === true : null;
+    ai.difficulty = targetDifficulty(teacherEntries, ai.correct);
+    if (firstTurn && !ai.theoryVisualPrompt) {
+      ai.theoryVisualPrompt = `A clear, calm school textbook illustration explaining the idea of ${topic.title}: ${ai.theory.slice(0, 260)}. No labels, no lettering, no answer.`;
     }
-    if (!ai.task) {
-      if (ai.correct) await awardXp(studentId, 10);
-      return finish(ai);
+    if (!ai.visualPrompt) {
+      ai.visualPrompt = `One calm educational illustration for a school lesson about ${topic.title}, showing this situation: ${ai.task.slice(0, 320)}. No labels, no lettering, no answer.`;
     }
-    if (ai.correct) await awardXp(studentId, 10);
-    else await touchActive(studentId);
+    if (!ai.task) throw new Error('Gemini did not provide the next task');
+
+    const nextOutcomes = hasAnswer ? [...outcomes, ai.correct] : outcomes;
+    const progress = masteryState(nextOutcomes);
+    Object.assign(ai, progress);
+    if (hasAnswer && progress.mastered) {
+      ai.task = '';
+      ai.feedback = `${ai.feedback} ${DONE_MSG[lang]}`.trim();
+    }
     history.push({ role: 'teacher', text: JSON.stringify(ai) });
     await saveProgress(prog, history, topicId, studentKey, studentId);
+    if (hasAnswer && progress.mastered) {
+      await pool.query('UPDATE progress SET completed=true WHERE id=$1', [prog.id]);
+      if (ai.correct) await awardXp(studentId, 10);
+      await awardXp(studentId, 50);
+    } else if (hasAnswer && ai.correct) {
+      await awardXp(studentId, 10);
+    } else {
+      await touchActive(studentId);
+    }
     res.json(ai);
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'ai_error', detail: String(e.message || e).slice(0, 200) });
+    console.error('Adaptive lesson generation failed', e);
+    res.status(500).json({ error: 'ai_error' });
   }
 });
 
-app.post('/api/ai/voice', async (req, res) => {
+app.post('/api/ai/voice', authStudent, async (req, res) => {
   const { topic } = req.body || {};
   const history = Array.isArray(req.body?.history) ? req.body.history : [];
   const lang = req.body?.lang === 'kk' ? 'kk' : 'ru';
@@ -892,13 +1076,10 @@ app.post('/api/ai/voice', async (req, res) => {
     return res.status(400).json({ error: 'message_required' });
   }
   try {
-    const reply = await mistralChat({
-      temperature: 0.35,
-      messages: [
+    const reply = await geminiChat([
         { role: 'system', content: `${SYSTEM_VOICE[lang]}\nКонтекст занятия: ${String(topic || 'учёба').slice(0, 200)}.` },
         ...turns,
-      ],
-    }, 400);
+      ], 500);
     res.json({ reply });
   } catch (e) {
     console.error('Voice chat failed', e);
@@ -926,7 +1107,7 @@ app.get('/api/voice/config', (req, res) => {
   });
 });
 
-app.post('/api/voice/tts', async (req, res) => {
+app.post('/api/voice/tts', authStudent, async (req, res) => {
   const text = String(req.body?.text || '').slice(0, 1000);
   const lang = req.body?.lang === 'kk' ? 'kk' : 'ru';
   let speed = parseFloat(req.body?.speed);

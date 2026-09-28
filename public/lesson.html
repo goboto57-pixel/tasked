@@ -37,6 +37,12 @@
       <div class="kicker" data-i18n="theoryK">Шаг 1 · Теория</div>
       <h1 id="topicTitle">Загрузка…</h1>
       <div id="theoryBody" class="body muted">ИИ-учитель готовит теорию…</div>
+      <div id="theoryBlocks" class="theory-blocks"></div>
+      <div class="lesson-visual" id="theoryVisual" hidden>
+        <div class="visual-loading" id="theoryVisualLoading" data-i18n="visualLoading">Готовим учебную иллюстрацию…</div>
+        <img id="theoryVisualImg" alt="">
+        <p class="visual-caption" id="theoryVisualCaption"></p>
+      </div>
       <div class="callout"><i data-icon="mic"></i><span data-i18n="voiceHint">Не понял тему? Нажми «Голосовой помощник» — спроси учителя, он ответит голосом.</span></div>
       <div class="btn-row">
         <button class="btn small" onclick="replayTheory()"><i data-icon="volume"></i><span data-i18n="speakBtn">Озвучить</span></button>
@@ -58,11 +64,18 @@
         </div>
         <div id="feedbackBox" class="feedback" style="display:none"></div>
         <div id="taskWrap">
-          <div class="task-num" id="taskNum">ЗАДАЧА #1</div>
+          <div class="task-meta"><div class="task-num" id="taskNum">ЗАДАЧА #1</div><span class="task-format" id="taskFormat"></span></div>
           <div class="task-text" id="taskText">…</div>
+          <div class="lesson-visual task-visual" id="taskVisual" hidden>
+            <div class="visual-loading" id="taskVisualLoading" data-i18n="visualLoading">Готовим учебную иллюстрацию…</div>
+            <img id="taskVisualImg" alt="">
+            <p class="visual-caption" id="taskVisualCaption"></p>
+          </div>
         </div>
         <label for="answerInput" id="answerLbl" data-i18n="yourAnswer">Твой ответ</label>
         <div id="optBox" class="opts" style="display:none"></div>
+        <div id="orderBox" class="order-list" style="display:none"></div>
+        <div id="matchBox" class="match-list" style="display:none"></div>
         <textarea id="answerInput" rows="2" data-i18n-ph="answerPh" placeholder="Напиши ответ или нажми «Диктовать»" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();submitAnswer();}"></textarea>
         <div class="btn-row">
           <button class="btn primary grow" id="submitBtn" onclick="submitAnswer()"><i data-icon="check"></i><span data-i18n="check">Проверить</span></button>
@@ -75,7 +88,7 @@
         <h4 data-i18n="attempts">История попыток</h4>
         <div class="chips" id="chips"><span class="muted" data-i18n="noAttempts">Здесь появятся твои попытки: верные и неверные.</span></div>
         <div class="streak" id="streak">
-          <div class="lbl"><span data-i18n="streakLbl">Верных подряд до завершения</span><b id="streakN">0 / 5</b></div>
+          <div class="lbl"><span data-i18n="masteryLbl">Освоение темы</span><b id="streakN">0%</b></div>
           <div class="track"><div class="fill" id="streakFill"></div></div>
         </div>
       </div>
@@ -133,9 +146,13 @@
 <script>
 const topicId = new URLSearchParams(location.search).get('topic');
 const $ = id => document.getElementById(id);
-let tasksDone = 0, attemptNum = 0, lastAnswer = null, soundOn = true, lastTheory = '', lastTask = '';
-let curKind = 'text', turnPending = false;
+let attemptNum = 0, lastAnswer = null, soundOn = true, lastTheory = '', lastTask = '', lessonDifficulty = 1;
+let curKind = 'short', turnPending = false;
 const chips = [];
+const visualState = {
+  theory: { version: 0, controller: null, url: null },
+  task: { version: 0, controller: null, url: null },
+};
 
 function curLang() { return (window.i18n && i18n.get()) || 'ru'; }
 function tr(k) { return (window.i18n && i18n.t(k)) || k; }
@@ -183,13 +200,74 @@ function boom() {
   document.body.appendChild(box);
   setTimeout(() => box.remove(), 4200);
 }
-function paintStreak() {
-  // consecutive correct answers at the end (backend finishes the lesson at 5)
-  let k = 0;
-  for (let i = chips.length - 1; i >= 0; i--) { if (chips[i].ok) k++; else break; }
-  $('streakN').textContent = Math.min(k, 5) + ' / 5';
-  $('streakFill').style.width = (Math.min(k, 5) / 5 * 100) + '%';
-  $('streak').classList.toggle('done', k >= 5);
+function paintMastery(value, mastered = false) {
+  const percent = Math.max(0, Math.min(100, Number(value) || 0));
+  $('streakN').textContent = percent + '%';
+  $('streakFill').style.width = percent + '%';
+  $('streak').classList.toggle('done', mastered);
+}
+function paintDifficulty(value = lessonDifficulty) {
+  lessonDifficulty = Math.max(1, Math.min(5, Number(value) || 1));
+  const label = lessonDifficulty < 2.5 ? tr('lvlStart') : lessonDifficulty < 4 ? tr('lvlMid') : tr('lvlHigh');
+  $('levelPill').textContent = tr('lvl') + label;
+}
+function shuffled(values) {
+  const out = [...values];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+function renderTheory(data) {
+  const body = $('theoryBody'), blocks = $('theoryBlocks');
+  body.textContent = data.theory || '';
+  body.classList.toggle('muted', !data.theory);
+  blocks.replaceChildren();
+  if (!Array.isArray(data.theoryBlocks) || !data.theoryBlocks.length) return;
+  data.theoryBlocks.forEach((item, index) => {
+    const section = document.createElement('article');
+    section.className = 'theory-block';
+    const number = document.createElement('span');
+    number.className = 'theory-step'; number.textContent = String(index + 1).padStart(2, '0');
+    const content = document.createElement('div');
+    const title = document.createElement('h3'); title.textContent = item.title || '';
+    const text = document.createElement('p'); text.textContent = item.text || '';
+    content.append(title, text); section.append(number, content); blocks.appendChild(section);
+  });
+}
+async function showLessonVisual(kind, prompt, caption) {
+  const state = visualState[kind];
+  const wrap = $(kind + 'Visual'), img = $(kind + 'VisualImg');
+  state.version++;
+  const version = state.version;
+  if (state.controller) state.controller.abort();
+  if (state.url) URL.revokeObjectURL(state.url);
+  state.url = null;
+  img.removeAttribute('src'); img.hidden = true;
+  $(kind + 'VisualCaption').textContent = '';
+  if (!prompt) { wrap.hidden = true; return; }
+  state.controller = new AbortController();
+  wrap.hidden = false; wrap.classList.add('loading');
+  $(kind + 'VisualLoading').hidden = false;
+  try {
+    const response = await fetch('/api/ai/visual', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }), signal: state.controller.signal,
+    });
+    if (!response.ok) throw new Error('visual unavailable');
+    const blob = await response.blob();
+    if (!blob.type.startsWith('image/')) throw new Error('invalid visual');
+    const url = URL.createObjectURL(blob);
+    if (version !== state.version) { URL.revokeObjectURL(url); return; }
+    state.url = url;
+    img.src = url; img.alt = caption || tr(kind === 'theory' ? 'theoryK' : 'taskK'); img.hidden = false;
+    $(kind + 'VisualCaption').textContent = caption || '';
+    $(kind + 'VisualLoading').hidden = true;
+    wrap.classList.remove('loading');
+  } catch (error) {
+    if (version === state.version) wrap.hidden = true;
+  }
 }
 function setStep(n) {
   // 1 = theory loading, 2 = solving, 3 = finished
@@ -230,6 +308,7 @@ async function loadTopic() {
 
 async function nextTurn(answer) {
   if (turnPending) return;
+  const answeredTaskNumber = answer !== null && answer !== undefined ? attemptNum : null;
   turnPending = true;
   lastAnswer = answer;
   $('status').textContent = tr('aiThinking');
@@ -247,10 +326,12 @@ async function nextTurn(answer) {
       $('status').textContent = map[data.error] || tr('errAi');
       return;
     }
-    if (data.theory) {
-      lastTheory = data.theory;
-      $('theoryBody').textContent = data.theory;
-      $('theoryBody').classList.remove('muted');
+    paintMastery(data.mastery, data.mastered);
+    paintDifficulty(data.difficulty);
+    if (data.theory || (Array.isArray(data.theoryBlocks) && data.theoryBlocks.length)) {
+      lastTheory = [data.theory, ...(data.theoryBlocks || []).map(block => `${block.title || ''}. ${block.text || ''}`)].filter(Boolean).join('\n');
+      renderTheory(data);
+      showLessonVisual('theory', data.theoryVisualPrompt, data.theoryVisualCaption);
     }
     if (data.feedback) {
       const fb = $('feedbackBox');
@@ -263,6 +344,7 @@ async function nextTurn(answer) {
       setStep(2);
       lastTask = data.task;
       renderOptions(data);
+      showLessonVisual('task', data.visualPrompt, data.visualCaption);
       $('stTaskN').textContent = '#' + attemptNum;
       $('taskNum').textContent = tr('taskN') + attemptNum;
       $('taskText').textContent = data.task;
@@ -275,18 +357,18 @@ async function nextTurn(answer) {
       $('answerInput').style.display = 'none';
       $('answerLbl').style.display = 'none';
       $('optBox').style.display = 'none';
+      $('orderBox').style.display = 'none';
+      $('matchBox').style.display = 'none';
       $('submitBtn').style.display = 'none';
       $('dictBtn').style.display = 'none';
       $('status').textContent = tr('doneT');
-      showXp(50); boom();
+      if (!data.alreadyCompleted) { showXp(50); boom(); }
       if (soundOn && data.feedback) Voice.speak(data.feedback).then(ok => { if (!ok) $('status').textContent = tr('voiceUnavailable'); });
     }
     if (data.correct === true || data.correct === false) {
-      chips.push({ ok: data.correct, n: attemptNum });
+      chips.push({ ok: data.correct, n: answeredTaskNumber || attemptNum });
       renderChips();
-      paintStreak();
-      if (data.correct) { tasksDone++; showXp(10); }
-      $('levelPill').textContent = tr('lvl') + (tasksDone >= 4 ? tr('lvlHigh') : tasksDone >= 2 ? tr('lvlMid') : tr('lvlStart'));
+      if (data.correct) showXp(10);
     }
   } catch (e) {
     $('status').textContent = tr('noConn');
@@ -300,10 +382,21 @@ async function nextTurn(answer) {
 async function submitAnswer() {
   if (turnPending) return;
   let a;
-  if (curKind === 'choice') {
+  if (curKind === 'choice' || curKind === 'true_false') {
     const sel = document.querySelector('input[name="opt"]:checked');
     if (!sel) { $('status').textContent = tr('pickOpt'); return; }
     a = sel.value;
+  } else if (curKind === 'order') {
+    a = [...document.querySelectorAll('#orderBox .order-item')].map(item => item.dataset.value);
+    if (!a.length) { $('status').textContent = tr('writeAns'); return; }
+  } else if (curKind === 'match') {
+    a = {};
+    let complete = true;
+    document.querySelectorAll('#matchBox select').forEach(select => {
+      if (!select.value) complete = false;
+      a[select.dataset.left] = select.value;
+    });
+    if (!complete) { $('status').textContent = tr('matchMissing'); return; }
   } else {
     a = $('answerInput').value.trim();
     if (!a) { $('status').textContent = tr('writeAns'); return; }
@@ -311,29 +404,75 @@ async function submitAnswer() {
   nextTurn(a);
 }
 function renderOptions(data) {
-  curKind = data.taskKind === 'choice' && Array.isArray(data.options) && data.options.length ? 'choice' : 'text';
-  const box = $('optBox');
-  if (curKind === 'choice') {
-    box.innerHTML = '';
-    data.options.forEach((o, i) => {
+  curKind = ['choice', 'true_false', 'order', 'match', 'short'].includes(data.taskType) ? data.taskType : 'short';
+  const box = $('optBox'), order = $('orderBox'), match = $('matchBox');
+  box.replaceChildren(); order.replaceChildren(); match.replaceChildren();
+  box.style.display = order.style.display = match.style.display = 'none';
+  $('answerInput').style.display = 'none';
+  $('answerLbl').style.display = 'block';
+  $('taskFormat').textContent = tr('type' + (curKind === 'true_false' ? 'TrueFalse' : curKind[0].toUpperCase() + curKind.slice(1)));
+
+  if (curKind === 'choice' || curKind === 'true_false') {
+    const options = curKind === 'true_false' ? [
+      { value: 'true', label: tr('trueOpt') }, { value: 'false', label: tr('falseOpt') },
+    ] : (Array.isArray(data.options) ? data.options : []).map(value => ({ value, label: value }));
+    options.forEach((o) => {
       const l = document.createElement('label');
       l.className = 'opt';
       const r = document.createElement('input');
-      r.type = 'radio'; r.name = 'opt'; r.value = o;
+      r.type = 'radio'; r.name = 'opt'; r.value = o.value;
       const s = document.createElement('span');
-      s.textContent = o;
+      s.textContent = o.label;
       l.append(r, s);
       box.appendChild(l);
     });
     box.style.display = 'flex';
-    $('answerInput').style.display = 'none';
     $('answerLbl').textContent = tr('chooseOpt');
+  } else if (curKind === 'order') {
+    const items = shuffled(Array.isArray(data.items) ? data.items : []);
+    if (items.length > 1 && items.every((value, index) => value === data.items[index])) items.push(items.shift());
+    items.forEach((value, index) => {
+      const row = document.createElement('div'); row.className = 'order-item'; row.dataset.value = value;
+      const label = document.createElement('span'); label.textContent = value;
+      const controls = document.createElement('div'); controls.className = 'order-controls';
+      for (const [direction, icon, key] of [[-1, '↑', 'moveUp'], [1, '↓', 'moveDown']]) {
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'btn small ghost';
+        button.textContent = icon; button.setAttribute('aria-label', tr(key));
+        button.disabled = direction < 0 ? index === 0 : index === items.length - 1;
+        button.addEventListener('click', () => moveOrderItem(row, direction)); controls.appendChild(button);
+      }
+      row.append(label, controls); order.appendChild(row);
+    });
+    order.style.display = 'grid'; $('answerLbl').textContent = tr('typeOrder');
+  } else if (curKind === 'match') {
+    const pairs = Array.isArray(data.pairs) ? data.pairs : [];
+    const correctOrder = pairs.map(pair => pair.right);
+    const choices = shuffled(correctOrder);
+    if (choices.length > 1 && choices.every((value, index) => value === correctOrder[index])) choices.push(choices.shift());
+    pairs.forEach(pair => {
+      const row = document.createElement('label'); row.className = 'match-row';
+      const left = document.createElement('span'); left.textContent = pair.left;
+      const select = document.createElement('select'); select.dataset.left = pair.left;
+      const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = tr('matchPh'); select.appendChild(placeholder);
+      choices.forEach(value => { const option = document.createElement('option'); option.value = value; option.textContent = value; select.appendChild(option); });
+      row.append(left, select); match.appendChild(row);
+    });
+    match.style.display = 'grid'; $('answerLbl').textContent = tr('typeMatch');
   } else {
-    box.style.display = 'none';
-    box.innerHTML = '';
-    $('answerInput').style.display = '';
+    $('answerInput').style.display = 'block';
     $('answerLbl').textContent = tr('yourAnswer');
   }
+}
+function moveOrderItem(row, direction) {
+  const target = direction < 0 ? row.previousElementSibling : row.nextElementSibling;
+  if (!target) return;
+  if (direction < 0) row.parentNode.insertBefore(row, target);
+  else row.parentNode.insertBefore(target, row);
+  [...row.parentNode.children].forEach((item, index) => {
+    const buttons = item.querySelectorAll('button');
+    buttons[0].disabled = index === 0;
+    buttons[1].disabled = index === row.parentNode.children.length - 1;
+  });
 }
 function replayTheory() { if (lastTheory) Voice.speak(lastTheory).then(ok => { if (!ok) $('status').textContent = tr('voiceUnavailable'); }); }
 function listenLesson() {
@@ -472,7 +611,7 @@ async function sendChat(forced) {
 window.onLangChange = () => {
   refreshLangLabel();
   $('taskTitle').textContent = tr('taskFromAi');
-  $('levelPill').textContent = tr('lvl') + (tasksDone >= 4 ? tr('lvlHigh') : tasksDone >= 2 ? tr('lvlMid') : tr('lvlStart'));
+  paintDifficulty();
   if (attemptNum) $('taskNum').textContent = tr('taskN') + attemptNum;
   renderChips();
   if (window.i18n) i18n.apply(curLang());

@@ -96,17 +96,18 @@
     </div>
     <div style="padding:20px 22px">
       <p class="muted" id="authWhy" data-i18n="authWhy">Аккаунт нужен, чтобы сохранялся твой прогресс по темам.</p>
-      <div class="auth-tabs">
-        <button id="tabLogin" class="active" onclick="authTab('login')" data-i18n="tabLogin">Вход</button>
-        <button id="tabReg" onclick="authTab('register')" data-i18n="tabReg">Регистрация</button>
+      <label for="authEmail" data-i18n="authEmail">Почта</label>
+      <input id="authEmail" type="email" data-i18n-ph="authEmailPh" placeholder="you@example.com" autocomplete="email" onkeydown="if(event.key==='Enter')sendEmailLink()">
+      <button class="btn primary" style="width:100%;margin-top:12px" id="emailGo" onclick="sendEmailCode()" data-i18n="authSendCode">Отправить код на почту</button>
+      <div id="emailCodeRow" style="display:none;margin-top:12px">
+        <label for="emailCode" data-i18n="authCode">Код из письма</label>
+        <input id="emailCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" data-i18n-ph="authCodePh" placeholder="6 цифр" onkeydown="if(event.key==='Enter')verifyEmailCode()">
+        <button class="btn" id="verifyEmailGo" style="width:100%;margin-top:10px" onclick="verifyEmailCode()" data-i18n="authVerifyCode">Подтвердить код</button>
       </div>
-      <label data-i18n="fLogin">Логин</label>
-      <input id="sLogin" data-i18n-ph="loginPh" placeholder="например: alikhan_01" autocomplete="username">
-      <div id="nameRow" style="display:none"><label data-i18n="fName">Имя (необязательно)</label><input id="sName" data-i18n-ph="namePh" placeholder="Как к вам обращаться"></div>
-      <label data-i18n="fPass">Пароль</label>
-      <input id="sPass" type="password" data-i18n-ph="passPh" placeholder="от 4 символов" autocomplete="current-password" onkeydown="if(event.key==='Enter')doStudentAuth()">
-      <button class="btn primary" style="width:100%;margin-top:16px" id="authGo" onclick="doStudentAuth()" data-i18n="goLogin">Войти</button>
-      <p id="authMsg" class="err" style="margin-top:10px;font-size:13px"></p>
+      <div style="display:flex;align-items:center;gap:12px;margin:15px 0;color:var(--muted);font-size:12px"><span style="height:1px;background:var(--line);flex:1"></span><span data-i18n="authOr">или</span><span style="height:1px;background:var(--line);flex:1"></span></div>
+      <button class="btn" style="width:100%" onclick="signInGoogle()"><span aria-hidden="true" style="font-weight:800;margin-right:9px">G</span><span data-i18n="authGoogle">Продолжить с Google</span></button>
+      <p id="authMsg" class="err" style="margin-top:10px;font-size:13px" aria-live="polite"></p>
+      <p class="muted" style="font-size:12px;margin-top:12px" data-i18n="authNoPassword">Пароль не нужен. Ссылка подтвердит, что почта принадлежит вам.</p>
     </div>
   </div>
 </div>
@@ -116,7 +117,9 @@
 <script src="/js/i18n.js"></script>
 <script>
 const ICONS_CYCLE = ['book','divide','atom','code','globe','flask','image','trending','chat','calculator'];
-let allTopics = [], currentCat = '', authMode = 'login', me = null;
+let allTopics = [], currentCat = '', me = null, firebaseApp, firebaseAuth, authConfig;
+const requestedNext = new URLSearchParams(location.search).get('next');
+if (requestedNext && requestedNext.startsWith('/lesson.html?')) sessionStorage.setItem('tasked_after_auth', requestedNext);
 
 function tr(k) { return (window.i18n && i18n.t(k)) || k; }
 function paintUser() {
@@ -142,46 +145,80 @@ async function loadMe() {
     me = r.ok ? await r.json() : null;
   } catch (e) { me = null; }
   paintUser();
+  if (allTopics.length) render();
 }
 async function onUserClick() {
-  if (me) { await fetch('/api/auth/logout', { method: 'POST' }); me = null; paintUser(); return; }
+  if (me) { await fetch('/api/auth/logout', { method: 'POST' }); if (firebaseAuth) await firebaseAuth.signOut().catch(() => {}); me = null; paintUser(); return; }
   document.getElementById('authMsg').textContent = '';
   const m = document.getElementById('authModal');
   m.style.display = 'flex'; m.classList.add('open');
 }
 function closeAuth() { const m = document.getElementById('authModal'); m.style.display = 'none'; m.classList.remove('open'); }
-function authTab(m) {
-  authMode = m;
-  document.getElementById('tabLogin').classList.toggle('active', m === 'login');
-  document.getElementById('tabReg').classList.toggle('active', m === 'register');
-  document.getElementById('nameRow').style.display = m === 'register' ? 'block' : 'none';
-  document.getElementById('authGo').textContent = m === 'register' ? tr('goReg') : tr('goLogin');
-  document.getElementById('authTitle').textContent = m === 'register' ? tr('regTitle') : tr('loginTitle');
+function authMessage(message, error = false) {
+  const el = document.getElementById('authMsg'); el.textContent = message;
+  el.classList.toggle('err', error); el.classList.toggle('muted', !error);
 }
-async function doStudentAuth() {
-  const login = document.getElementById('sLogin').value.trim();
-  const password = document.getElementById('sPass').value;
-  const name = document.getElementById('sName').value.trim();
-  const url = authMode === 'register' ? '/api/auth/student/register' : '/api/auth/student/login';
-  const button = document.getElementById('authGo');
-  button.disabled = true;
-  let d;
+async function setupFirebaseAuth() {
+  const r = await fetch('/api/auth/config'); authConfig = await r.json();
+  if (!authConfig.enabled) throw new Error(tr('authNeedsSetup'));
+  if (!window.firebase) {
+    for (const src of ['https://www.gstatic.com/firebasejs/11.10.0/firebase-app-compat.js', 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth-compat.js']) {
+      await new Promise((resolve, reject) => { const script = document.createElement('script'); script.src = src; script.onload = resolve; script.onerror = () => reject(new Error('Не удалось загрузить библиотеку входа.')); document.head.appendChild(script); });
+    }
+  }
+  firebaseApp = firebase.apps.find(x => x.name === 'tasked') || firebase.initializeApp(authConfig.firebase, 'tasked');
+  firebaseAuth = firebaseApp.auth(); return firebaseAuth;
+}
+async function exchangeFirebaseUser(user) {
+  const r = await fetch('/api/auth/firebase', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken: await user.getIdToken(true) }) });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error === 'auth_not_configured' ? 'Вход пока не настроен на сервере.' : data.error === 'email_not_verified' ? 'Подтвердите почту по ссылке из письма.' : 'Не удалось подтвердить вход. Попробуйте ещё раз.');
+  return data;
+}
+async function sendEmailCode() {
+  const email = document.getElementById('authEmail').value.trim(), btn = document.getElementById('emailGo'); btn.disabled = true;
   try {
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password, name }) });
-    d = await r.json();
-    if (!r.ok && !d.error) throw new Error('auth unavailable');
-  } catch (e) {
-    document.getElementById('authMsg').textContent = tr('noConn');
-    button.disabled = false;
-    return;
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error(tr('authBadEmail'));
+    const response = await fetch('/api/auth/email-code/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error === 'email_auth_not_configured' ? 'Вход по коду ещё не настроен на сервере.' : data.error === 'email_wait_before_resend' ? 'Подождите минуту перед повторной отправкой.' : data.error === 'email_rate_limited' ? 'Превышен лимит отправки кодов. Попробуйте позже.' : 'Не удалось отправить письмо. Проверьте настройки сервиса.');
+    document.getElementById('emailCodeRow').style.display = 'block';
+    document.getElementById('emailCode').focus(); authMessage(tr('authMailSent'));
+  } catch (e) { authMessage(e.message || 'Не удалось отправить письмо.', true); }
+  finally { btn.disabled = false; }
+}
+async function verifyEmailCode() {
+  const email = document.getElementById('authEmail').value.trim(), code = document.getElementById('emailCode').value.trim();
+  const btn = document.getElementById('verifyEmailGo'); btn.disabled = true;
+  try {
+    if (!/^\d{6}$/.test(code)) throw new Error('Введите шестизначный код из письма.');
+    const auth = await setupFirebaseAuth();
+    const response = await fetch('/api/auth/email-code/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, code }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error === 'email_auth_not_configured' ? 'Вход по коду ещё не настроен на сервере.' : 'Код неверный или срок его действия истёк.');
+    await auth.signInWithCustomToken(data.customToken);
+  } catch (e) { authMessage(e.message || tr('authFailed'), true); }
+  finally { btn.disabled = false; }
+}
+async function signInGoogle() {
+  try { const auth = await setupFirebaseAuth(); await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); }
+  catch (e) { authMessage(e.message || 'Не удалось войти через Google.', true); }
+}
+function continueAfterAuth() {
+  const destination = sessionStorage.getItem('tasked_after_auth');
+  if (destination && destination.startsWith('/lesson.html?')) {
+    sessionStorage.removeItem('tasked_after_auth'); location.assign(destination);
   }
-  button.disabled = false;
-  if (d.error) {
-    const map = { login_taken: tr('errTaken'), bad_credentials: tr('errBad'), password_too_short: tr('errShort'), login_taken_or_invalid: tr('errLoginBad') };
-    document.getElementById('authMsg').textContent = map[d.error] || d.error;
-    return;
-  }
-  closeAuth(); loadMe();
+}
+async function initAuth() {
+  try {
+    const auth = await setupFirebaseAuth();
+    auth.onAuthStateChanged(async user => {
+      if (!user) return;
+      try { await exchangeFirebaseUser(user); await loadMe(); closeAuth(); continueAfterAuth(); }
+      catch (e) { authMessage(e.message || tr('authFailed'), true); }
+    });
+  } catch (e) { if (new URLSearchParams(location.search).has('auth')) authMessage(e.message || tr('authFailed'), true); }
 }
 
 function skels() {
@@ -203,6 +240,7 @@ function lastTopic() {
   catch (e) { return null; }
 }
 function heroGo() {
+  if (!me) { onUserClick(); return; }
   const lt = lastTopic();
   if (lt && allTopics.some(t => t.id == lt.id)) { location.href = '/lesson.html?topic=' + lt.id; return; }
   document.getElementById('topicsTitle').scrollIntoView({ behavior: 'smooth' });
@@ -260,7 +298,8 @@ function render() {
     const desc = description.replace(/^\[.+?\]\s*/, '') || tr('cardDescD');
     const c = document.createElement('a');
     c.className = 'card clickable topic-card';
-    c.href = '/lesson.html?topic=' + encodeURIComponent(t.id);
+    c.href = me ? '/lesson.html?topic=' + encodeURIComponent(t.id) : '#';
+    c.addEventListener('click', event => { if (!me) { event.preventDefault(); onUserClick(); } });
     const category = document.createElement('div');
     category.className = 'eyebrow';
     category.textContent = cat || tr('cardCatD');
@@ -295,7 +334,8 @@ function filterCat(name, el) {
   render();
 }
 if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
-loadMe(); loadTopics();
+initAuth(); loadMe(); loadTopics();
+if (new URLSearchParams(location.search).get('auth') === 'required') onUserClick();
 </script>
 </body>
 </html>

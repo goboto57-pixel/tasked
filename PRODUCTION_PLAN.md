@@ -24,7 +24,7 @@
 ### 1.1 Секреты и окружение
 - [ ] Убрать `.env` из репозитория, проверить `git log` — текущий `.env`
       с реальными ключами уже засвечен, **ключи Mistral/Azure пересоздать**.
-- [ ] На Render задать: `DATABASE_URL` (Neon), `MISTRAL_API_KEY`, `AZURE_*`,
+- [ ] На Render задать: `DATABASE_URL` (Neon), `GEMINI_API_KEY`, `AZURE_*`,
       `FISH_API_KEY`, `ADMIN_PASSWORD` (не дефолтный!), `SESSION_SECRET` (длинный).
 - [ ] Разные БД/ключи для dev / staging / prod.
 
