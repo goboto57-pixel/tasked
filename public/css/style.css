@@ -20,6 +20,26 @@
   --red-line: #542024;
   --radius: 14px;
 }
+/* Light theme — same monochrome system, inverted */
+[data-theme="light"] {
+  --bg: #f4f5f6;
+  --bg-soft: #ffffff;
+  --card: #ffffff;
+  --card-2: #eceef1;
+  --ink: #121417;
+  --muted: #5c636c;
+  --faint: #9aa1a9;
+  --line: #e0e3e8;
+  --line-soft: #edeff2;
+  --btn: #121417;
+  --btn-ink: #ffffff;
+  --green: #15803d;
+  --green-bg: #e5f6ec;
+  --green-line: #bbe5c9;
+  --red: #dc2626;
+  --red-bg: #fdeaea;
+  --red-line: #f3c1c2;
+}
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
@@ -63,7 +83,13 @@ button { font-family: inherit; }
   border: none; background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 700;
   padding: 6px 12px; border-radius: 999px; cursor: pointer;
 }
-.lang-switch button.active { background: var(--ink); color: #000; }
+.lang-switch button.active { background: var(--btn); color: var(--btn-ink); }
+.theme-btn {
+  width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--card); color: var(--muted); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 16px;
+}
+.theme-btn:hover { color: var(--ink); border-color: #3a3f47; }
 
 /* ---------- layout ---------- */
 .layout { display: flex; min-height: calc(100vh - 60px); }
@@ -91,8 +117,16 @@ button { font-family: inherit; }
 
 /* ---------- hero ---------- */
 .hero {
+  position: relative; overflow: hidden;
   background: var(--card); border: 1px solid var(--line);
   border-radius: 18px; padding: 34px 36px; margin-bottom: 24px;
+}
+.hero::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(560px 220px at 12% -40px, rgba(255,255,255,.055), transparent 70%);
+}
+[data-theme="light"] .hero::before {
+  background: radial-gradient(560px 220px at 12% -40px, rgba(0,0,0,.05), transparent 70%);
 }
 .hero .eyebrow {
   display: inline-block; border: 1px solid var(--line); background: var(--card-2);
@@ -144,7 +178,49 @@ button { font-family: inherit; }
 .btn.ghost { background: transparent; }
 .btn.small { padding: 7px 13px; font-size: 13px; border-radius: 9px; }
 .btn.danger { background: transparent; border-color: var(--red-line); color: var(--red); }
+.btn:active { transform: scale(.98); }
 .btn:disabled { opacity: .5; cursor: default; }
+
+/* skeleton loading */
+.skel {
+  border-radius: var(--radius); border: 1px solid var(--line);
+  background: var(--card); padding: 20px; min-height: 190px;
+}
+.skel .row { border-radius: 8px; background: var(--card-2); }
+.skel .anim { animation: shimmer 1.4s ease-in-out infinite; }
+@keyframes shimmer { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+
+/* footer */
+.footer {
+  border-top: 1px solid var(--line); margin-top: 26px; padding: 22px 4px 8px;
+  display: flex; align-items: center; gap: 10px; color: var(--faint); font-size: 13px;
+}
+.footer img { width: 26px; height: 20px; }
+.footer .spacer { flex: 1; }
+.footer a { color: var(--muted); text-decoration: none; }
+.footer a:hover { color: var(--ink); }
+
+/* streak bar (consecutive correct answers) */
+.streak { margin-top: 14px; }
+.streak .lbl { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+.streak .lbl b { color: var(--ink); }
+.streak .track { height: 8px; border-radius: 99px; background: var(--card-2); border: 1px solid var(--line); overflow: hidden; }
+.streak .fill { height: 100%; width: 0%; border-radius: 99px; background: var(--ink); transition: width .35s ease; }
+.streak.done .fill { background: var(--green); }
+
+/* modal entrance */
+.modal-bg.open { display: flex; }
+.modal-bg.open .modal { animation: pop .18s ease-out; }
+@keyframes pop { from { transform: translateY(8px) scale(.985); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* polish */
+:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
+::selection { background: var(--card-2); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--card-2); border-radius: 99px; border: 2px solid var(--bg); }
+tr { transition: background .12s; }
+tbody tr:hover { background: rgba(255,255,255,.015); }
+[data-theme="light"] tbody tr:hover { background: rgba(0,0,0,.02); }
 
 .muted { color: var(--muted); font-size: 13.5px; }
 .ok { color: var(--green); } .err { color: var(--red); }
@@ -237,13 +313,13 @@ td { padding: 12px 15px; border-top: 1px solid var(--line); }
 /* ---------- floating voice ---------- */
 #voiceFab {
   position: fixed; right: 24px; bottom: 24px; z-index: 100;
-  height: 52px; border: 1px solid var(--ink); cursor: pointer; border-radius: 999px;
-  background: var(--ink); color: #000;
+  height: 52px; border: 1px solid var(--btn); cursor: pointer; border-radius: 999px;
+  background: var(--btn); color: var(--btn-ink);
   font-size: 14px; font-weight: 700; padding: 0 20px;
   display: flex; align-items: center; gap: 10px;
 }
-#voiceFab:hover { background: #fff; }
-#voiceFab svg { width: 20px; height: 20px; fill: #000; }
+#voiceFab:hover { filter: brightness(1.12); }
+#voiceFab svg { width: 20px; height: 20px; fill: var(--btn-ink); }
 #voiceFab.listening { outline: 2px solid var(--red); outline-offset: 2px; }
 
 .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.65); z-index: 200; display: none; align-items: center; justify-content: center; padding: 16px; }
@@ -256,7 +332,7 @@ td { padding: 12px 15px; border-top: 1px solid var(--line); }
 .modal .messages { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
 .msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; font-size: 13.5px; white-space: pre-wrap; }
 .msg.ai { background: var(--card-2); border: 1px solid var(--line); align-self: flex-start; }
-.msg.me { background: var(--ink); color: #000; align-self: flex-end; }
+.msg.me { background: var(--btn); color: var(--btn-ink); align-self: flex-end; }
 .modal .input-row { padding: 12px 20px 16px; display: flex; gap: 8px; border-top: 1px solid var(--line); }
 #micBtn.listening { border-color: var(--red); color: var(--red); }
 #voiceStatus { position: fixed; right: 24px; bottom: 88px; z-index: 100; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; font-size: 13px; color: var(--muted); display: none; }

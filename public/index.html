@@ -5,12 +5,14 @@
 <title>tasked — Каталог тем</title>
 <link rel="icon" href="/img/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/css/style.css">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('tasked_theme')==='light'?'light':'dark'}catch(e){document.documentElement.dataset.theme='dark'}</script>
 </head>
 <body>
 <header class="topbar">
   <a class="brand" href="/"><img src="/img/logo.svg" alt="tasked"><span class="word">tasked</span></a>
   <div class="search"><span class="s-icon"><i data-icon="search"></i></span><input id="search" data-i18n-ph="searchPh" placeholder="Поиск тем…"></div>
   <div class="top-actions">
+    <button class="theme-btn" data-theme-btn onclick="toggleTheme()"><i data-icon="sun"></i></button>
     <div class="lang-switch"><button data-lang="ru" onclick="setLang('ru')">RU</button><button data-lang="kk" onclick="setLang('kk')">KZ</button></div>
     <div class="user" id="userArea"></div>
   </div>
@@ -36,7 +38,8 @@
       <h1 data-i18n="heroH">Выбери тему — остальное сделает ИИ</h1>
       <p data-i18n="heroP">Короткая теория, задания под твой уровень и голосовой разбор. Прогресс сохраняется в твоём аккаунте.</p>
       <div class="cta-row">
-        <button class="btn primary" onclick="document.getElementById('topicsTitle').scrollIntoView({behavior:'smooth'})"><span data-i18n="heroCta">Выбрать тему</span><i data-icon="arrowright"></i></button>
+        <button class="btn primary" id="heroGo" onclick="heroGo()"><span id="heroGoT" data-i18n="heroCta">Выбрать тему</span><i data-icon="arrowright"></i></button>
+        <button class="btn" id="heroAll" onclick="document.getElementById('topicsTitle').scrollIntoView({behavior:'smooth'})" style="display:none"><span data-i18n="allTopicsBtn">Все темы</span></button>
         <button class="btn" id="heroAuth" onclick="onUserClick()"><i data-icon="user"></i><span data-i18n="loginAsStudent">Войти как ученик</span></button>
       </div>
       <div class="steps">
@@ -54,6 +57,11 @@
       <p><b data-i18n="emptyT">Тем пока нет</b><br><span data-i18n="emptyP">Темы создаёт учитель в панели управления.</span></p>
       <a class="btn" href="/teacher.html"><i data-icon="shield"></i><span data-i18n="openDash">Открыть панель учителя</span></a>
     </div>
+    <footer class="footer">
+      <img src="/img/logo.svg" alt="tasked"><span><b>tasked</b> · <span data-i18n="footerTag">Адаптивное обучение с ИИ</span></span>
+      <span class="spacer"></span>
+      <a href="/teacher.html" data-i18n="teacherDash">Панель учителя</a>
+    </footer>
   </main>
 </div>
 
@@ -96,6 +104,7 @@
 </div>
 
 <script src="/js/icons.js"></script>
+<script src="/js/theme.js"></script>
 <script src="/js/i18n.js"></script>
 <script>
 const ICONS_CYCLE = ['book','divide','atom','code','globe','flask','image','trending','chat','calculator'];
@@ -128,9 +137,10 @@ async function loadMe() {
 async function onUserClick() {
   if (me) { await fetch('/api/auth/logout', { method: 'POST' }); me = null; paintUser(); return; }
   document.getElementById('authMsg').textContent = '';
-  document.getElementById('authModal').style.display = 'flex';
+  const m = document.getElementById('authModal');
+  m.style.display = 'flex'; m.classList.add('open');
 }
-function closeAuth() { document.getElementById('authModal').style.display = 'none'; }
+function closeAuth() { const m = document.getElementById('authModal'); m.style.display = 'none'; m.classList.remove('open'); }
 function authTab(m) {
   authMode = m;
   document.getElementById('tabLogin').classList.toggle('active', m === 'login');
@@ -154,7 +164,38 @@ async function doStudentAuth() {
   closeAuth(); loadMe();
 }
 
+function skels() {
+  const g = document.getElementById('topics');
+  g.innerHTML = '';
+  for (let i = 0; i < 6; i++) {
+    const d = document.createElement('div');
+    d.className = 'skel';
+    d.innerHTML = '<div class="row anim" style="height:13px;width:38%"></div>'
+      + '<div class="row anim" style="height:42px;width:52px;border-radius:11px;margin-top:14px"></div>'
+      + '<div class="row anim" style="height:17px;width:78%;margin-top:14px"></div>'
+      + '<div class="row anim" style="height:13px;width:94%;margin-top:10px"></div>'
+      + '<div class="row anim" style="height:13px;width:70%;margin-top:8px"></div>';
+    g.appendChild(d);
+  }
+}
+function lastTopic() {
+  try { return JSON.parse(localStorage.getItem('tasked_last') || 'null'); }
+  catch (e) { return null; }
+}
+function heroGo() {
+  const lt = lastTopic();
+  if (lt && allTopics.some(t => t.id == lt.id)) { location.href = '/lesson.html?topic=' + lt.id; return; }
+  document.getElementById('topicsTitle').scrollIntoView({ behavior: 'smooth' });
+}
+function paintHeroGo() {
+  const lt = lastTopic();
+  const ok = lt && allTopics.some(t => t.id == lt.id);
+  const el = document.getElementById('heroGoT');
+  el.textContent = ok ? (i18n.t('continueT') + ': ' + lt.title) : i18n.t('heroCta');
+  document.getElementById('heroAll').style.display = ok ? 'inline-flex' : 'none';
+}
 async function loadTopics() {
+  skels();
   allTopics = await (await fetch('/api/topics')).json();
   document.getElementById('cntAll').textContent = allTopics.length;
   const cats = [...new Set(allTopics.map(t => (t.description.match(/^\[(.+?)\]/) || [])[1]).filter(Boolean))];
@@ -198,6 +239,7 @@ function render() {
   });
   paintIcons(grid);
   if (window.i18n) i18n.apply(i18n.get() || 'ru');
+  paintHeroGo();
 }
 document.getElementById('search').addEventListener('input', render);
 function filterCat(name, el) {

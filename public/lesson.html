@@ -5,11 +5,14 @@
 <title>Урок — tasked</title>
 <link rel="icon" href="/img/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/css/style.css">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('tasked_theme')==='light'?'light':'dark'}catch(e){document.documentElement.dataset.theme='dark'}</script>
 </head>
 <body>
 <header class="topbar">
   <a class="brand" href="/"><img src="/img/logo.svg" alt="tasked"><span class="word">tasked</span></a>
   <div class="top-actions">
+    <div class="top-actions">
+    <button class="theme-btn" data-theme-btn onclick="toggleTheme()"><i data-icon="sun"></i></button>
     <div class="lang-switch"><button data-lang="ru" onclick="setLang('ru')">RU</button><button data-lang="kk" onclick="setLang('kk')">KZ</button></div>
     <div class="user">
       <div style="text-align:right"><div class="name" id="topicTitleTop">Урок</div><div class="role" id="sttLang">ru-RU</div></div>
@@ -61,6 +64,10 @@
       <div class="attempts">
         <h4 data-i18n="attempts">История попыток</h4>
         <div class="chips" id="chips"><span class="muted" data-i18n="noAttempts">Здесь появятся твои попытки: верные и неверные.</span></div>
+        <div class="streak" id="streak">
+          <div class="lbl"><span data-i18n="streakLbl">Верных подряд до завершения</span><b id="streakN">0 / 5</b></div>
+          <div class="track"><div class="fill" id="streakFill"></div></div>
+        </div>
       </div>
     </div>
   </div>
@@ -108,6 +115,7 @@
 
 <script src="https://aka.ms/csspeech/jsbrowserpackageraw"></script>
 <script src="/js/icons.js"></script>
+<script src="/js/theme.js"></script>
 <script src="/js/i18n.js"></script>
 <script src="/js/voice.js"></script>
 <script>
@@ -124,6 +132,14 @@ function studentKey() {
 }
 function refreshLangLabel() {
   $('sttLang').textContent = Voice.sttLang() + ' · Fish Audio';
+}
+function paintStreak() {
+  // consecutive correct answers at the end (backend finishes the lesson at 5)
+  let k = 0;
+  for (let i = chips.length - 1; i >= 0; i--) { if (chips[i].ok) k++; else break; }
+  $('streakN').textContent = Math.min(k, 5) + ' / 5';
+  $('streakFill').style.width = (Math.min(k, 5) / 5 * 100) + '%';
+  $('streak').classList.toggle('done', k >= 5);
 }
 function setStep(n) {
   // 1 = theory loading, 2 = solving, 3 = finished
@@ -144,6 +160,7 @@ async function loadTopic() {
   if (!t) { $('topicTitle').textContent = 'Тема не найдена'; return; }
   $('topicTitle').textContent = t.title;
   $('topicTitleTop').textContent = t.title;
+  try { localStorage.setItem('tasked_last', JSON.stringify({ id: t.id, title: t.title })); } catch (e) {}
   $('crumbs').innerHTML = '';
   $('crumbs').append(Object.assign(document.createElement('b'), { textContent: 'Каталог' }), ' / ' + t.title);
   nextTurn(null);
@@ -193,6 +210,7 @@ async function nextTurn(answer) {
       chips.push({ ok: data.correct, n: attemptNum });
       $('chips').innerHTML = chips.map(c =>
         `<span class="chip-a ${c.ok ? 'good' : 'bad'}">${c.ok ? 'Верно' : 'Мимо'} · ${c.n}</span>`).join('');
+      paintStreak();
       if (data.correct) tasksDone++;
       $('levelPill').textContent = (curLang() === 'kk' ? 'Деңгей: ' : 'Уровень: ') + (tasksDone >= 4 ? 'высокий' : tasksDone >= 2 ? 'средний' : 'старт');
     }
@@ -281,8 +299,8 @@ function addMsg(who, text) {
   $('chatLog').appendChild(d);
   $('chatLog').scrollTop = $('chatLog').scrollHeight;
 }
-function openVoice() { $('voiceModal').style.display = 'flex'; $('chatInput').focus(); }
-function closeVoice() { $('voiceModal').style.display = 'none'; }
+function openVoice() { const m = $('voiceModal'); m.style.display = 'flex'; m.classList.add('open'); $('chatInput').focus(); }
+function closeVoice() { const m = $('voiceModal'); m.style.display = 'none'; m.classList.remove('open'); }
 
 async function sendChat(forced) {
   const q = String(forced !== undefined ? forced : $('chatInput').value).trim();

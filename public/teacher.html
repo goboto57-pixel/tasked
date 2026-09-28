@@ -5,6 +5,7 @@
 <title>tasked — Панель учителя</title>
 <link rel="icon" href="/img/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/css/style.css">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('tasked_theme')==='light'?'light':'dark'}catch(e){document.documentElement.dataset.theme='dark'}</script>
 </head>
 <body>
 
@@ -39,6 +40,8 @@
     <a class="brand" href="/"><img src="/img/logo.svg" alt="tasked"><span class="word">tasked</span></a>
     <div class="search"><span class="s-icon"><i data-icon="search"></i></span><input placeholder="Поиск по темам…" oninput="filterTable(this.value)"></div>
     <div class="top-actions">
+      <div class="top-actions">
+      <button class="theme-btn" data-theme-btn onclick="toggleTheme()"><i data-icon="sun"></i></button>
       <div class="user">
         <div style="text-align:right"><div class="name" id="whoLogin">Учитель</div><div class="role" id="whoRole">Панель управления</div></div>
         <button class="btn small" onclick="logout()" title="Выйти"><i data-icon="logout"></i><span>Выйти</span></button>
@@ -133,6 +136,7 @@
 </div>
 
 <script src="/js/icons.js"></script>
+<script src="/js/theme.js"></script>
 <script>
 let me = null, authRole = 'teacher';
 
@@ -209,9 +213,11 @@ function renderTable(list) {
     tr.innerHTML = `<td><b></b></td><td>${cat}</td><td class="muted">${new Date(t.created_at).toLocaleDateString('ru')}</td>
       <td><span class="status-pill">Опубликовано</span></td>
       <td><div class="row-actions"><button class="icon-btn open">Открыть</button>
+          <button class="icon-btn linkbtn"><i data-icon="link"></i>Ссылка</button>
           <button class="icon-btn del">Удалить</button></div></td>`;
     tr.querySelector('b').textContent = t.title;
     tr.querySelector('.open').onclick = () => location.href = '/lesson.html?topic=' + t.id;
+    tr.querySelector('.linkbtn').onclick = (ev) => copyTopicLink(t.id, ev.currentTarget);
     tr.querySelector('.del').onclick = () => delTopic(t.id);
     tb.appendChild(tr);
   });
@@ -232,6 +238,20 @@ async function delTopic(id) {
   if (!confirm('Удалить тему? Прогресс учеников по ней тоже удалится.')) return;
   await fetch('/api/topics/' + id, { method: 'DELETE' });
   loadMine();
+}
+async function copyTopicLink(id, btn) {
+  const url = location.origin + '/lesson.html?topic=' + id;
+  try { await navigator.clipboard.writeText(url); }
+  catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = url; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (err) {}
+    ta.remove();
+  }
+  const old = btn.innerHTML;
+  btn.innerHTML = '<i data-icon="check"></i>Скопировано';
+  paintIcons(btn);
+  setTimeout(() => { btn.innerHTML = old; paintIcons(btn); }, 1600);
 }
 async function loadProgress() {
   const rows = await (await fetch('/api/teacher/progress')).json();
