@@ -163,8 +163,19 @@ async function doStudentAuth() {
   const password = document.getElementById('sPass').value;
   const name = document.getElementById('sName').value.trim();
   const url = authMode === 'register' ? '/api/auth/student/register' : '/api/auth/student/login';
-  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password, name }) });
-  const d = await r.json();
+  const button = document.getElementById('authGo');
+  button.disabled = true;
+  let d;
+  try {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password, name }) });
+    d = await r.json();
+    if (!r.ok && !d.error) throw new Error('auth unavailable');
+  } catch (e) {
+    document.getElementById('authMsg').textContent = tr('noConn');
+    button.disabled = false;
+    return;
+  }
+  button.disabled = false;
   if (d.error) {
     const map = { login_taken: tr('errTaken'), bad_credentials: tr('errBad'), password_too_short: tr('errShort'), login_taken_or_invalid: tr('errLoginBad') };
     document.getElementById('authMsg').textContent = map[d.error] || d.error;
@@ -205,7 +216,17 @@ function paintHeroGo() {
 }
 async function loadTopics() {
   skels();
-  allTopics = await (await fetch('/api/topics')).json();
+  try {
+    const response = await fetch('/api/topics');
+    if (!response.ok) throw new Error('topics unavailable');
+    allTopics = await response.json();
+    if (!Array.isArray(allTopics)) throw new Error('invalid topics');
+  } catch (e) {
+    document.getElementById('topics').innerHTML = `<div class="empty-box"><p><b>${tr('noConn')}</b></p><button class="btn" onclick="loadTopics()">${tr('retry') || 'Повторить'}</button></div>`;
+    document.getElementById('empty').style.display = 'none';
+    document.getElementById('topicsCount').textContent = '';
+    return;
+  }
   document.getElementById('cntAll').textContent = allTopics.length;
   const cats = [...new Set(allTopics.map(t => (t.description.match(/^\[(.+?)\]/) || [])[1]).filter(Boolean))];
   const box = document.getElementById('cats');

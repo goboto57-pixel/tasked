@@ -19,7 +19,7 @@ npm start              # http://localhost:3000
 ## Деплой на Render
 1. Бесплатная БД: создай проект на [neon.tech](https://neon.tech), скопируй Connection String.
 2. Новый Web Service → подключи репозиторий (или используй `render.yaml` / Blueprint).
-3. Environment: `DATABASE_URL`, `MISTRAL_API_KEY`, `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`, `SESSION_SECRET`.
+3. Environment: `DATABASE_URL`, `MISTRAL_API_KEY`, `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`, `SESSION_SECRET`, `ADMIN_PASSWORD` (initial creator account; choose a strong unique password).
 
 ## Страницы
 - `/` — каталог тем + плавающая голосовая кнопка (свободный разговор с ИИ)

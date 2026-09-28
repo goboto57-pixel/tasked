@@ -134,7 +134,7 @@
 const topicId = new URLSearchParams(location.search).get('topic');
 const $ = id => document.getElementById(id);
 let tasksDone = 0, attemptNum = 0, lastAnswer = null, soundOn = true, lastTheory = '', lastTask = '';
-let curKind = 'text';
+let curKind = 'text', turnPending = false;
 const chips = [];
 
 function curLang() { return (window.i18n && i18n.get()) || 'ru'; }
@@ -199,9 +199,19 @@ function setStep(n) {
 async function loadTopic() {
   refreshLangLabel();
   setStep(1);
-  const topics = await (await fetch('/api/topics')).json();
+  let topics;
+  try {
+    const response = await fetch('/api/topics');
+    if (!response.ok) throw new Error('topics unavailable');
+    topics = await response.json();
+  } catch (e) {
+    $('topicTitle').textContent = tr('noConn');
+    $('theoryBody').textContent = tr('noConn');
+    $('submitBtn').disabled = true;
+    return;
+  }
   const t = topics.find(x => x.id == topicId);
-  if (!t) { $('topicTitle').textContent = tr('topicMissing'); return; }
+  if (!t) { $('topicTitle').textContent = tr('topicMissing'); $('taskWrap').style.display = 'none'; $('submitBtn').disabled = true; return; }
   $('topicTitle').textContent = t.title;
   $('topicTitleTop').textContent = t.title;
   $('taskTitle').textContent = tr('taskFromAi');
@@ -213,16 +223,20 @@ async function loadTopic() {
 }
 
 async function nextTurn(answer) {
+  if (turnPending) return;
+  turnPending = true;
   lastAnswer = answer;
   $('status').textContent = tr('aiThinking');
   $('submitBtn').disabled = true;
+  $('dictBtn').disabled = true;
+  $('feedbackBox').style.display = 'none';
   try {
     const r = await fetch('/api/ai/turn', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ topicId, studentKey: studentKey(), answer, lang: curLang() })
     });
     const data = await r.json();
-    $('submitBtn').disabled = false;
+    if (!r.ok) throw new Error('turn unavailable');
     if (data.error) {
       const map = { topic_not_found: tr('errTopic'), bad_request: tr('errTopic'), ai_error: tr('errAi') };
       $('status').textContent = map[data.error] || (data.detail ? tr('errAi') : data.error);
@@ -270,12 +284,16 @@ async function nextTurn(answer) {
       $('levelPill').textContent = tr('lvl') + (tasksDone >= 4 ? tr('lvlHigh') : tasksDone >= 2 ? tr('lvlMid') : tr('lvlStart'));
     }
   } catch (e) {
-    $('submitBtn').disabled = false;
     $('status').textContent = tr('noConn');
+  } finally {
+    turnPending = false;
+    if ($('taskWrap').style.display !== 'none') $('submitBtn').disabled = false;
+    if ($('dictBtn').style.display !== 'none') $('dictBtn').disabled = false;
   }
 }
 
 async function submitAnswer() {
+  if (turnPending) return;
   let a;
   if (curKind === 'choice') {
     const sel = document.querySelector('input[name="opt"]:checked');

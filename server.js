@@ -113,23 +113,20 @@ async function initDb() {
     WHERE p.student_id IS NULL AND p.student_key = 'student:' || s.login
   `);
 
-  // seed creator account: login pyfold
+  // Seed the creator account only once. Never ship or restore a known
+  // password on every restart; set ADMIN_PASSWORD for the first deployment.
   const adminLogin = process.env.ADMIN_LOGIN || 'pyfold';
-  const adminPass = process.env.ADMIN_PASSWORD || 'Hopedeke_725280';
   const exists = await pool.query('SELECT id FROM teachers WHERE login=$1 OR email=$2', [adminLogin, 'pyfold@tasked.local']);
-  const hash = await bcrypt.hash(adminPass, 10);
-  if (!exists.rows.length) {
+  if (!exists.rows.length && process.env.ADMIN_PASSWORD) {
+    const hash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 10);
     await pool.query(
       `INSERT INTO teachers (login, email, password_hash, display_name, is_admin)
        VALUES ($1,$2,$3,$4,true)`,
       [adminLogin, 'pyfold@tasked.local', hash, 'Создатель']
     );
     console.log('Seeded creator account: pyfold');
-  } else {
-    await pool.query(
-      `UPDATE teachers SET login=$2, password_hash=$3, is_admin=true WHERE id=$1`,
-      [exists.rows[0].id, adminLogin, hash]
-    );
+  } else if (!exists.rows.length) {
+    console.warn('ADMIN_PASSWORD is unset; creator account was not seeded. Set it in the environment to create the initial admin account.');
   }
 }
 

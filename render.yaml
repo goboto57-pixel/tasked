@@ -31,6 +31,6 @@ services:
       - key: ADMIN_LOGIN
         value: pyfold
       - key: ADMIN_PASSWORD
-        sync: false        # Hopedeke_725280 — задать в Environment
+        sync: false        # задаётся при первом создании аккаунта создателя
       - key: SESSION_SECRET
         generateValue: true
