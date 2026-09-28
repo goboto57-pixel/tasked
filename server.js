@@ -720,8 +720,8 @@ const SYSTEM_KK = `Сен — мейірімді, қолдайтын мұғал�
 "correct" өрісі — оқушының АЛДЫҢҒЫ жауабының нәтижесі (true/false), ең бірінші қадамда null.`;
 
 const SYSTEM_VOICE = {
-  ru: 'Ты — добрый учитель-репетитор. Отвечай на русском, коротко и понятно, 2-4 предложения, разговорным стилем (тебя слушают голосом).',
-  kk: 'Сен — мейірімді мұғалімсің. Қазақ тілінде, қысқа және түсінікті, 2-4 сөйлеммен, ауызекі стильде жауап бер (сені дауыстап тыңдайды).',
+  ru: 'Ты — спокойный и внимательный учитель-репетитор. Отвечай на русском, без эмодзи, уменьшительных слов и лишних вступлений. Сначала прямо ответь на вопрос ученика, затем при необходимости объясни одним простым примером. Держи ответ в пределах 2–4 коротких предложений и не повторяй вопрос.',
+  kk: 'Сен — сабырлы әрі мұқият мұғалімсің. Қазақ тілінде жауап бер. Эмодзи, еркелету сөздерін және артық кіріспені қолданба. Алдымен сұраққа нақты жауап бер, қажет болса бір қарапайым мысалмен түсіндір. Жауапты 2–4 қысқа сөйлеммен шектеп, сұрақты қайталама.',
 };
 
 function parseTeacherEntries(history) {
@@ -878,35 +878,49 @@ app.post('/api/ai/turn', async (req, res) => {
 });
 
 app.post('/api/ai/voice', async (req, res) => {
-  const { topic, history } = req.body || {};
+  const { topic } = req.body || {};
+  const history = Array.isArray(req.body?.history) ? req.body.history : [];
   const lang = req.body?.lang === 'kk' ? 'kk' : 'ru';
+  const turns = history.slice(-12).flatMap((item) => {
+    if (!item || typeof item.text !== 'string') return [];
+    const role = item.role === 'student' || item.role === 'user' ? 'user'
+      : item.role === 'teacher' || item.role === 'assistant' ? 'assistant' : null;
+    return role ? [{ role, content: item.text.slice(0, 1500) }] : [];
+  });
+  while (turns.length && turns[turns.length - 1].role === 'assistant') turns.pop();
+  if (!turns.length || turns[turns.length - 1].role !== 'user') {
+    return res.status(400).json({ error: 'message_required' });
+  }
   try {
     const reply = await mistralChat({
-      temperature: 0.5,
+      temperature: 0.35,
       messages: [
-        { role: 'system', content: SYSTEM_VOICE[lang] },
-        { role: 'user', content: `Тема разговора: «${topic || 'свободная беседа об учёбе'}».\nИстория диалога:\n${JSON.stringify(history || [], null, 2)}` },
+        { role: 'system', content: `${SYSTEM_VOICE[lang]}\nКонтекст занятия: ${String(topic || 'учёба').slice(0, 200)}.` },
+        ...turns,
       ],
-    });
+    }, 400);
     res.json({ reply });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('Voice chat failed', e);
+    res.status(500).json({ error: 'ai_error' });
   }
 });
 
 // ---------- Fish Audio TTS proxy (free model s2.1-pro-free) ----------
 const FISH_MODEL = process.env.FISH_MODEL || 's2.1-pro-free';
-const FISH_VOICE_RU = process.env.FISH_VOICE_RU || 'e3ca0b027dc349539885834f450e35eb';
-const FISH_VOICE_KK = process.env.FISH_VOICE_KK || process.env.FISH_VOICE_RU || 'e3ca0b027dc349539885834f450e35eb';
+const FISH_VOICE_RU = process.env.FISH_VOICE_RU || 'e897cbd38bc94548b7f5340c9db5fc4d';
+const FISH_VOICE_KK = process.env.FISH_VOICE_KK || '93bb57166f474f43bdbdadec4c20298f';
 
 const ttsCache = new Map();
-function cacheKey(text, lang, speed) {
-  return crypto.createHash('sha256').update(lang + ':' + speed + ':' + text).digest('hex');
+function cacheKey(text, lang, speed, voice) {
+  return crypto.createHash('sha256').update(lang + ':' + speed + ':' + voice + ':' + text).digest('hex');
 }
 
 app.get('/api/voice/config', (req, res) => {
   res.json({
     fishEnabled: Boolean(process.env.FISH_API_KEY),
+    azureEnabled: Boolean(process.env.AZURE_SPEECH_KEY && process.env.AZURE_SPEECH_REGION),
+    voiceNames: { ru: 'Calm Russian Female', kk: 'AIKO' },
     stt: { ru: 'ru-RU', kk: 'kk-KZ' },
     azureVoices: { ru: 'ru-RU-SvetlanaNeural', kk: 'kk-KZ-AigulNeural' },
   });
@@ -921,7 +935,8 @@ app.post('/api/voice/tts', async (req, res) => {
   if (!text.trim()) return res.status(400).json({ error: 'empty text' });
   if (!process.env.FISH_API_KEY) return res.status(503).json({ error: 'fish_disabled' });
 
-  const key = cacheKey(text, lang, speed);
+  const voice = lang === 'kk' ? FISH_VOICE_KK : FISH_VOICE_RU;
+  const key = cacheKey(text, lang, speed, voice);
   const hit = ttsCache.get(key);
   if (hit) {
     res.set('Content-Type', 'audio/mpeg');
@@ -939,13 +954,16 @@ app.post('/api/voice/tts', async (req, res) => {
       },
       body: JSON.stringify({
         text,
-        reference_id: lang === 'kk' ? FISH_VOICE_KK : FISH_VOICE_RU,
+        reference_id: voice,
+        temperature: 0.4,
+        top_p: 0.7,
         format: 'mp3',
         mp3_bitrate: 128,
         normalize: true,
         latency: 'normal',
         prosody: { speed },
       }),
+      signal: AbortSignal.timeout(45000),
     });
     if (!resp.ok) {
       const t = await resp.text();

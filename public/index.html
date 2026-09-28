@@ -244,26 +244,43 @@ async function loadTopics() {
 }
 function render() {
   const q = document.getElementById('search').value.toLowerCase();
-  const list = allTopics.filter(t =>
-    (!currentCat || t.description.startsWith('[' + currentCat + ']')) &&
-    (!q || t.title.toLowerCase().includes(q)));
+  const list = allTopics.filter(t => {
+    const title = String(t.title || '');
+    const description = String(t.description || '');
+    return (!currentCat || description.startsWith('[' + currentCat + ']')) &&
+      (!q || title.toLowerCase().includes(q) || description.toLowerCase().includes(q));
+  });
   const grid = document.getElementById('topics');
   document.getElementById('empty').style.display = list.length ? 'none' : 'block';
   document.getElementById('topicsCount').textContent = list.length ? String(list.length) : '';
   grid.innerHTML = '';
   list.forEach((t, i) => {
-    const cat = (t.description.match(/^\[(.+?)\]/) || [])[1];
-    const desc = t.description.replace(/^\[.+?\]\s*/, '') || tr('cardDescD');
-    const c = document.createElement('div');
-    c.className = 'card clickable';
-    c.onclick = () => location.href = '/lesson.html?topic=' + t.id;
-    c.innerHTML = `<div class="eyebrow">${cat || tr('cardCatD')}</div>
-      <div class="head"><div class="tile t${i % 4}"><i data-icon="${ICONS_CYCLE[i % ICONS_CYCLE.length]}"></i></div><h3></h3></div>
-      <p></p>
-      <div class="meta"><i data-icon="checkcircle"></i><span data-i18n="cardMeta">Теория + задания + голос</span></div>
-      <span class="btn" style="margin-top:4px"><span data-i18n="start">Начать</span><i data-icon="arrowright"></i></span>`;
-    c.querySelector('h3').textContent = t.title;
-    c.querySelector('p').textContent = desc;
+    const description = String(t.description || '');
+    const cat = (description.match(/^\[(.+?)\]/) || [])[1];
+    const desc = description.replace(/^\[.+?\]\s*/, '') || tr('cardDescD');
+    const c = document.createElement('a');
+    c.className = 'card clickable topic-card';
+    c.href = '/lesson.html?topic=' + encodeURIComponent(t.id);
+    const category = document.createElement('div');
+    category.className = 'eyebrow';
+    category.textContent = cat || tr('cardCatD');
+    const head = document.createElement('div');
+    head.className = 'head';
+    const tile = document.createElement('div');
+    tile.className = 'tile t' + (i % 4);
+    tile.innerHTML = `<i data-icon="${ICONS_CYCLE[i % ICONS_CYCLE.length]}"></i>`;
+    const title = document.createElement('h3');
+    title.textContent = String(t.title || '');
+    head.append(tile, title);
+    const summary = document.createElement('p');
+    summary.textContent = desc;
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.innerHTML = '<i data-icon="checkcircle"></i><span data-i18n="cardMeta">Теория + задания + голос</span>';
+    const action = document.createElement('span');
+    action.className = 'btn topic-action';
+    action.innerHTML = '<span data-i18n="start">Начать</span><i data-icon="arrowright"></i>';
+    c.append(category, head, summary, meta, action);
     grid.appendChild(c);
   });
   paintIcons(grid);

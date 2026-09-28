@@ -176,15 +176,14 @@ async function loadOverview() {
   g.innerHTML = '';
   document.getElementById('myEmpty').style.display = (o.topics && o.topics.length) ? 'none' : 'block';
   if (o.topics) o.topics.forEach(t => {
-    const c = document.createElement('div');
-    c.className = 'card clickable';
-    c.onclick = () => location.href = t.topic_id ? '/lesson.html?topic=' + t.topic_id : '/';
+    const c = document.createElement('a');
+    c.className = 'card clickable topic-card';
+    c.href = t.topic_id ? '/lesson.html?topic=' + encodeURIComponent(t.topic_id) : '/';
     c.innerHTML = `<div class="head"><div class="tile t${(t.topic_id || 0) % 4}"><i data-icon="book"></i></div><h3 style="flex:1"></h3>${t.completed ? '<span class="status-pill" style="border-color:var(--green-line);background:var(--green-bg);color:var(--green)">✓</span>' : ''}</div>
       <div class="meta"><i data-icon="checkcircle"></i><span></span></div>
-      <button class="btn" style="margin-top:4px"><span data-i18n="continueT">Продолжить</span><i data-icon="arrowright"></i></button>`;
+      <span class="btn topic-action"><span data-i18n="continueT">Продолжить</span><i data-icon="arrowright"></i></span>`;
     c.querySelector('h3').textContent = t.title;
     c.querySelector('.meta span').textContent = t.score + ' / ' + t.attempts;
-    c.querySelector('button').onclick = () => location.href = t.topic_id ? '/lesson.html?topic=' + t.topic_id : '/';
     g.appendChild(c);
   });
   paintIcons(g);

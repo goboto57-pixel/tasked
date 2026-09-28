@@ -106,7 +106,7 @@
     </div>
     <div class="input-row">
       <input id="chatInput" data-i18n-ph="askPh" placeholder="Спросить что-нибудь…" onkeydown="if(event.key==='Enter')sendChat()">
-      <button class="btn primary" onclick="sendChat()"><i data-icon="send"></i></button>
+      <button class="btn primary" id="chatSendBtn" onclick="sendChat()" aria-label="Отправить вопрос"><i data-icon="send"></i></button>
       <button class="btn ghost" id="micBtn" onclick="toggleMic()" title="Говорить"><i data-icon="mic"></i></button>
     </div>
   </div>
@@ -144,8 +144,14 @@ function studentKey() {
   if (!k) { k = 'anon-' + Math.random().toString(36).slice(2, 10); localStorage.setItem('studentKey', k); }
   return k;
 }
-function refreshLangLabel() {
-  $('sttLang').textContent = Voice.sttLang() + ' · Fish Audio';
+async function refreshLangLabel() {
+  let provider = 'Fish Audio';
+  try {
+    const response = await fetch('/api/voice/config');
+    const config = response.ok ? await response.json() : null;
+    provider = config?.fishEnabled ? 'Fish Audio' : config?.azureEnabled ? 'Azure Speech' : tr('voiceUnavailable');
+  } catch (e) { provider = tr('voiceUnavailable'); }
+  $('sttLang').textContent = provider + ' · ' + Voice.sttLang();
 }
 function renderChips() {
   if (!chips.length) return;
@@ -236,10 +242,9 @@ async function nextTurn(answer) {
       body: JSON.stringify({ topicId, studentKey: studentKey(), answer, lang: curLang() })
     });
     const data = await r.json();
-    if (!r.ok) throw new Error('turn unavailable');
-    if (data.error) {
+    if (!r.ok || data.error) {
       const map = { topic_not_found: tr('errTopic'), bad_request: tr('errTopic'), ai_error: tr('errAi') };
-      $('status').textContent = map[data.error] || (data.detail ? tr('errAi') : data.error);
+      $('status').textContent = map[data.error] || tr('errAi');
       return;
     }
     if (data.theory) {
@@ -263,7 +268,7 @@ async function nextTurn(answer) {
       $('taskText').textContent = data.task;
       $('answerInput').value = '';
       $('status').textContent = '';
-      if (soundOn) Voice.speak(data.task);
+      if (soundOn) Voice.speak(data.task).then(ok => { if (!ok) $('status').textContent = tr('voiceUnavailable'); });
     } else {
       setStep(3);
       $('taskWrap').style.display = 'none';
@@ -274,7 +279,7 @@ async function nextTurn(answer) {
       $('dictBtn').style.display = 'none';
       $('status').textContent = tr('doneT');
       showXp(50); boom();
-      if (soundOn && data.feedback) Voice.speak(data.feedback);
+      if (soundOn && data.feedback) Voice.speak(data.feedback).then(ok => { if (!ok) $('status').textContent = tr('voiceUnavailable'); });
     }
     if (data.correct === true || data.correct === false) {
       chips.push({ ok: data.correct, n: attemptNum });
@@ -330,10 +335,10 @@ function renderOptions(data) {
     $('answerLbl').textContent = tr('yourAnswer');
   }
 }
-function replayTheory() { if (lastTask) Voice.speak(lastTask); else if (lastTheory) Voice.speak(lastTheory); }
+function replayTheory() { if (lastTheory) Voice.speak(lastTheory).then(ok => { if (!ok) $('status').textContent = tr('voiceUnavailable'); }); }
 function listenLesson() {
   const t = ((lastTheory ? lastTheory + '\n' : '') + (lastTask || '')).slice(0, 1000);
-  if (t.trim()) Voice.speak(t);
+  if (t.trim()) Voice.speak(t).then(ok => { if (!ok) $('status').textContent = tr('voiceUnavailable'); });
 }
 function setSpeed(v) { try { localStorage.setItem('tasked_speed', v); } catch (e) {} }
 try { const s = localStorage.getItem('tasked_speed'); if (s) $('spdSel').value = s; } catch (e) {}
@@ -342,14 +347,27 @@ try { const s = localStorage.getItem('tasked_speed'); if (s) $('spdSel').value =
 let dictRec = null, dictOn = false;
 let micRec = null, micOn = false;
 function showStatus(t) { const el = $('voiceStatus'); el.textContent = t; el.style.display = t ? 'block' : 'none'; }
-function stopRec(rec) { try { rec && rec.stopContinuousRecognitionAsync(); } catch (e) {} }
+function stopRec(rec) {
+  if (!rec) return;
+  try { rec.stopContinuousRecognitionAsync(() => rec.close(), () => rec.close()); }
+  catch (e) { try { rec.close(); } catch (ignore) {} }
+}
+async function speechConfig() {
+  try {
+    const response = await fetch('/api/speech/config');
+    return response.ok ? await response.json() : null;
+  } catch (e) { return null; }
+}
 async function dictateAnswer() {
-  const cfg = await (await fetch('/api/speech/config')).json();
-  if (!window.SpeechSDK || !cfg.key) { $('status').textContent = tr('noStt'); return; }
+  const cfg = await speechConfig();
+  if (!window.SpeechSDK || !cfg?.key) { $('status').textContent = tr('noStt'); return; }
   if (dictOn) { stopRec(dictRec); dictRec = null; dictOn = false; $('dictBtn').classList.remove('listening'); $('status').textContent = ''; return; }
-  const sc = SpeechSDK.SpeechConfig.fromSubscription(cfg.key, cfg.region);
-  sc.speechRecognitionLanguage = Voice.sttLang();
-  dictRec = new SpeechSDK.SpeechRecognizer(sc, SpeechSDK.AudioConfig.fromDefaultMicrophoneInput());
+  if (micOn) { stopRec(micRec); micRec = null; micOn = false; $('micBtn').classList.remove('listening'); }
+  try {
+    const sc = SpeechSDK.SpeechConfig.fromSubscription(cfg.key, cfg.region);
+    sc.speechRecognitionLanguage = Voice.sttLang();
+    dictRec = new SpeechSDK.SpeechRecognizer(sc, SpeechSDK.AudioConfig.fromDefaultMicrophoneInput());
+  } catch (e) { $('status').textContent = tr('noMic'); return; }
   dictOn = true;
   $('dictBtn').classList.add('listening');
   $('status').textContent = tr('listening');
@@ -376,16 +394,19 @@ function testVoice() {
 }
 
 async function toggleMic() {
-  const cfg = await (await fetch('/api/speech/config')).json();
-  if (!window.SpeechSDK || !cfg.key) { showStatus(tr('sttOff')); return; }
+  const cfg = await speechConfig();
+  if (!window.SpeechSDK || !cfg?.key) { showStatus(tr('sttOff')); return; }
   if (micOn) {
     stopRec(micRec); micRec = null;
     micOn = false; $('micBtn').classList.remove('listening'); showStatus('');
     return;
   }
-  const sc = SpeechSDK.SpeechConfig.fromSubscription(cfg.key, cfg.region);
-  sc.speechRecognitionLanguage = Voice.sttLang();
-  micRec = new SpeechSDK.SpeechRecognizer(sc, SpeechSDK.AudioConfig.fromDefaultMicrophoneInput());
+  if (dictOn) { stopRec(dictRec); dictRec = null; dictOn = false; $('dictBtn').classList.remove('listening'); }
+  try {
+    const sc = SpeechSDK.SpeechConfig.fromSubscription(cfg.key, cfg.region);
+    sc.speechRecognitionLanguage = Voice.sttLang();
+    micRec = new SpeechSDK.SpeechRecognizer(sc, SpeechSDK.AudioConfig.fromDefaultMicrophoneInput());
+  } catch (e) { showStatus(tr('noMic')); return; }
   micOn = true;
   $('micBtn').classList.add('listening');
   showStatus(tr('listeningChat'));
@@ -403,6 +424,7 @@ async function toggleMic() {
 }
 
 const chatHistory = [];
+let chatPending = false;
 function addMsg(who, text) {
   const d = document.createElement('div');
   d.className = 'msg ' + who;
@@ -415,12 +437,15 @@ function closeVoice() { const m = $('voiceModal'); m.style.display = 'none'; m.c
 
 async function sendChat(forced) {
   const q = String(forced !== undefined ? forced : $('chatInput').value).trim();
-  if (!q) return;
+  if (!q || chatPending) return;
+  chatPending = true;
+  $('chatSendBtn').disabled = true;
   $('chatInput').value = '';
   addMsg('me', q);
   const thinking = document.createElement('div');
   thinking.className = 'msg ai'; thinking.textContent = '…';
   $('chatLog').appendChild(thinking);
+  const historyIndex = chatHistory.length;
   chatHistory.push({ role: 'student', text: q });
   try {
     const r = await fetch('/api/ai/voice', {
@@ -428,10 +453,19 @@ async function sendChat(forced) {
       body: JSON.stringify({ topic: $('topicTitle').textContent, history: chatHistory.slice(-10), lang: curLang() })
     });
     const data = await r.json();
-    thinking.textContent = data.reply || (tr('errAi') + (data.detail ? '' : ''));
-    chatHistory.push({ role: 'teacher', text: data.reply || '' });
-    if (soundOn && data.reply) Voice.speak(data.reply);
-  } catch (e) { thinking.textContent = tr('noConn'); }
+    if (!r.ok || data.error || !data.reply) {
+      thinking.textContent = data.error === 'ai_error' ? tr('errAi') : tr('noConn');
+      chatHistory.splice(historyIndex, 1);
+    } else {
+      thinking.textContent = data.reply;
+      chatHistory.push({ role: 'teacher', text: data.reply });
+      if (soundOn) Voice.speak(data.reply).then(ok => { if (!ok) showStatus(tr('voiceUnavailable')); });
+    }
+  } catch (e) {
+    thinking.textContent = tr('noConn');
+    chatHistory.splice(historyIndex, 1);
+  }
+  finally { chatPending = false; $('chatSendBtn').disabled = false; }
   $('chatLog').scrollTop = $('chatLog').scrollHeight;
 }
 

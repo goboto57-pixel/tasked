@@ -10,6 +10,7 @@
       const t = document.documentElement.dataset.theme || 'dark';
       b.innerHTML = `<i data-icon="${t === 'light' ? 'moon' : 'sun'}"></i>`;
       b.title = t === 'light' ? 'Тёмная тема' : 'Светлая тема';
+      b.setAttribute('aria-label', b.title);
       if (window.paintIcons) paintIcons(b);
     });
   }
