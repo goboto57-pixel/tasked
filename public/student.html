@@ -49,6 +49,8 @@
         <div style="flex:1">
           <h2 id="cabName" style="font-size:19px">—</h2>
           <div class="muted" id="cabSub">—</div>
+          <div class="lvlbar"><div class="lvlfill" id="lvlFill"></div></div>
+          <div class="lvlt" id="lvlTxt"></div>
         </div>
         <button class="btn small" onclick="logout()"><i data-icon="logout"></i><span data-i18n="logout">Выйти</span></button>
       </div>
@@ -65,6 +67,7 @@
       </div>
       <div id="myGrid" class="grid"></div>
       <div id="myEmpty" class="empty-box" style="display:none;margin-bottom:18px">
+        <div class="empty-ic"><i data-icon="book"></i></div>
         <p><b data-i18n="noTopicsT">Ты ещё не начал ни одной темы</b><br><span data-i18n="noTopicsP">Выбери тему в каталоге — она появится здесь.</span></p>
         <a class="btn" href="/"><i data-icon="book"></i><span data-i18n="allTopicsBtn">Все темы</span></a>
       </div>
@@ -161,6 +164,11 @@ async function loadOverview() {
   document.getElementById('stLevel').textContent = o.level || 1;
   document.getElementById('stStreak').textContent = o.streak_days || 0;
   document.getElementById('stTopics').textContent = (o.topics && o.topics.length) || 0;
+  // xp progress to next level: level L spans [(L-1)^2*100, L^2*100)
+  const lv = o.level || 1, xp = o.xp || 0;
+  const lo = (lv - 1) * (lv - 1) * 100, hi = lv * lv * 100;
+  document.getElementById('lvlFill').style.width = Math.min(100, Math.max(0, (xp - lo) / (hi - lo) * 100)) + '%';
+  document.getElementById('lvlTxt').textContent = xp + ' / ' + hi + ' XP';
   const g = document.getElementById('myGrid');
   g.innerHTML = '';
   document.getElementById('myEmpty').style.display = (o.topics && o.topics.length) ? 'none' : 'block';
@@ -168,7 +176,7 @@ async function loadOverview() {
     const c = document.createElement('div');
     c.className = 'card clickable';
     c.onclick = () => location.href = t.topic_id ? '/lesson.html?topic=' + t.topic_id : '/';
-    c.innerHTML = `<div class="head"><h3 style="flex:1"></h3>${t.completed ? '<span class="status-pill" style="border-color:var(--green-line);background:var(--green-bg);color:var(--green)">✓</span>' : ''}</div>
+    c.innerHTML = `<div class="head"><div class="tile t${(t.topic_id || 0) % 4}"><i data-icon="book"></i></div><h3 style="flex:1"></h3>${t.completed ? '<span class="status-pill" style="border-color:var(--green-line);background:var(--green-bg);color:var(--green)">✓</span>' : ''}</div>
       <div class="meta"><i data-icon="checkcircle"></i><span></span></div>
       <button class="btn" style="margin-top:4px"><span data-i18n="continueT">Продолжить</span><i data-icon="arrowright"></i></button>`;
     c.querySelector('h3').textContent = t.title;

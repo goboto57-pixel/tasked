@@ -57,6 +57,7 @@
     </div>
     <div id="topics" class="grid"></div>
     <div id="empty" class="empty-box" style="display:none">
+      <div class="empty-ic"><i data-icon="book"></i></div>
       <p><b data-i18n="emptyT">Тем пока нет</b><br><span data-i18n="emptyP">Темы создаёт учитель в панели управления.</span></p>
       <a class="btn" href="/teacher.html"><i data-icon="shield"></i><span data-i18n="openDash">Открыть панель учителя</span></a>
     </div>
@@ -232,7 +233,7 @@ function render() {
     c.className = 'card clickable';
     c.onclick = () => location.href = '/lesson.html?topic=' + t.id;
     c.innerHTML = `<div class="eyebrow">${cat || tr('cardCatD')}</div>
-      <div class="head"><div class="tile"><i data-icon="${ICONS_CYCLE[i % ICONS_CYCLE.length]}"></i></div><h3></h3></div>
+      <div class="head"><div class="tile t${i % 4}"><i data-icon="${ICONS_CYCLE[i % ICONS_CYCLE.length]}"></i></div><h3></h3></div>
       <p></p>
       <div class="meta"><i data-icon="checkcircle"></i><span data-i18n="cardMeta">Теория + задания + голос</span></div>
       <span class="btn" style="margin-top:4px"><span data-i18n="start">Начать</span><i data-icon="arrowright"></i></span>`;
