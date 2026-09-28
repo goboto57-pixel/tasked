@@ -361,6 +361,12 @@ label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); 
 .stepper .s.now .dot { background: var(--acc); }
 .lesson-grid { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(320px, 1fr); gap: 16px; align-items: start; }
 @media (max-width: 900px) { .lesson-grid { grid-template-columns: 1fr; } }
+.lesson-grid.task-only { grid-template-columns: minmax(0, 860px); justify-content: center; }
+.lesson-grid > section { min-width: 0; }
+.theory-navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); margin-top: 20px; padding-top: 16px; }
+.theory-example { margin-top: 14px; padding: 13px 15px; border-left: 3px solid var(--line-strong); background: var(--card-2); border-radius: 0 10px 10px 0; }
+.theory-key { margin-top: 10px; color: var(--muted); font-weight: 700; }
+.theory-return { margin-top: 12px; }
 .crumbs { font-size: 13.5px; color: var(--faint); margin-bottom: 12px; }
 .crumbs b { color: var(--ink); font-weight: 600; }
 .theory-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px 26px; }

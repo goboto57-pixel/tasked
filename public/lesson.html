@@ -28,11 +28,12 @@
 <div class="main">
   <div class="crumbs" id="crumbs"><b>Каталог</b> / …</div>
   <div class="stepper" id="stepper">
-    <span class="s now" id="st1"><span class="dot"></span><span data-i18n="stTheory">Теория</span></span>
+    <span class="s now" id="st1"><span class="dot"></span><span data-i18n="stTheory">Теория</span> <b id="theoryWindowN">1/2</b></span>
     <span class="s" id="st2"><span class="dot"></span><span data-i18n="stTask">Задание</span> <b id="stTaskN"></b></span>
     <span class="s" id="st3"><span class="dot"></span><span data-i18n="stDone">Готово</span></span>
   </div>
-  <div class="lesson-grid">
+  <div class="lesson-grid" id="lessonGrid">
+    <section id="theoryPane">
     <div class="theory-card">
       <div class="kicker" data-i18n="theoryK">Шаг 1 · Теория</div>
       <h1 id="topicTitle">Загрузка…</h1>
@@ -53,9 +54,15 @@
         <button class="btn small ghost" onclick="Voice.stopAll()"><i data-icon="volumex"></i><span data-i18n="stopBtn">Стоп</span></button>
         <button class="btn small ghost" onclick="window.print()"><i data-icon="printer"></i><span data-i18n="printBtn">Печать</span></button>
       </div>
+      <div class="theory-navigation">
+        <button id="theoryPrev" class="btn" onclick="moveTheory(-1)" disabled>Назад</button>
+        <span class="muted" id="theoryPageLabel">Окно 1 из 2</span>
+        <button id="theoryNext" class="btn primary" onclick="moveTheory(1)">Следующее окно</button>
+      </div>
     </div>
+    </section>
 
-    <div>
+    <section id="taskPane" style="display:none">
       <div class="task-card">
         <div class="kicker" style="font-size:11.5px;font-weight:800;letter-spacing:1.2px;color:var(--faint);text-transform:uppercase;margin-bottom:6px" data-i18n="taskK">Шаг 2 · Задание</div>
         <div class="head">
@@ -92,7 +99,8 @@
           <div class="track"><div class="fill" id="streakFill"></div></div>
         </div>
       </div>
-    </div>
+      <button class="btn small theory-return" onclick="returnToTheory()">Вернуться к теории</button>
+    </section>
   </div>
 </div>
 
@@ -148,6 +156,7 @@ const topicId = new URLSearchParams(location.search).get('topic');
 const $ = id => document.getElementById(id);
 let attemptNum = 0, lastAnswer = null, soundOn = true, lastTheory = '', lastTask = '', lessonDifficulty = 1;
 let curKind = 'short', turnPending = false;
+let theoryPages = [], theoryPageIndex = 0;
 const chips = [];
 const visualState = {
   theory: { version: 0, controller: null, url: null },
@@ -236,6 +245,83 @@ function renderTheory(data) {
     content.append(title, text); section.append(number, content); blocks.appendChild(section);
   });
 }
+function renderTheoryWindow() {
+  const page = theoryPages[theoryPageIndex];
+  if (!page) return;
+  $('theoryBody').textContent = page.text || '';
+  $('theoryBody').classList.toggle('muted', !page.text);
+  $('theoryBlocks').replaceChildren();
+  const section = document.createElement('article'); section.className = 'theory-block';
+  const number = document.createElement('span'); number.className = 'theory-step'; number.textContent = String(theoryPageIndex + 1).padStart(2, '0');
+  const content = document.createElement('div');
+  const heading = document.createElement('h3'); heading.textContent = page.title || '';
+  const body = document.createElement('p'); body.textContent = page.detail || '';
+  content.append(heading, body);
+  if (page.example) { const example = document.createElement('p'); example.className = 'theory-example'; example.textContent = page.example; content.appendChild(example); }
+  if (page.key) { const key = document.createElement('p'); key.className = 'theory-key'; key.textContent = page.key; content.appendChild(key); }
+  section.append(number, content); $('theoryBlocks').appendChild(section);
+  showFreeVisual('theory', page.visualSpec, page.title);
+  const total = theoryPages.length;
+  $('theoryWindowN').textContent = `${theoryPageIndex + 1}/${total}`;
+  $('theoryPageLabel').textContent = curLang() === 'kk' ? `Терезе ${theoryPageIndex + 1}/${total}` : `Окно ${theoryPageIndex + 1} из ${total}`;
+  $('theoryPrev').disabled = theoryPageIndex === 0;
+  $('theoryNext').textContent = theoryPageIndex === total - 1 ? (attemptNum ? tr('returnToTask') : tr('startPractice')) : tr('nextTheoryWindow');
+}
+function xmlText(value) { return String(value || '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[ch])); }
+function freeDiagramSvg(spec) {
+  const items = (Array.isArray(spec?.items) ? spec.items : []).slice(0, 5);
+  if (items.length < 2) return '';
+  const title = xmlText(spec.title || '');
+  const palette = ['#81947a', '#c18a68', '#8a9da0', '#b6a064', '#9a8b9d'];
+  const heading = title ? `<text x="32" y="34" fill="#343a35" font-size="16" font-weight="700">${title}</text>` : '';
+  let shapes = '';
+  if (spec.kind === 'bars') {
+    const max = Math.max(...items.map(item => Math.max(1, Number(String(item.value).replace(',', '.')) || 1)));
+    shapes = items.map((item, i) => {
+      const y = 58 + i * 31, amount = Number(String(item.value).replace(',', '.')) || max * 0.58;
+      return `<text x="32" y="${y + 14}" fill="#4b514b" font-size="13">${xmlText(item.label)}</text><rect x="220" y="${y}" width="${Math.max(14, Math.round(340 * amount / max))}" height="19" rx="7" fill="${palette[i % palette.length]}" opacity=".82"/><text x="574" y="${y + 14}" fill="#4b514b" font-size="12">${xmlText(item.value)}</text>`;
+    }).join('');
+  } else if (spec.kind === 'compare') {
+    const width = Math.floor(536 / items.length);
+    shapes = items.map((item, i) => {
+      const x = 32 + i * (width + 12);
+      return `<rect x="${x}" y="65" width="${width}" height="120" rx="14" fill="#f3f0e8" stroke="#d9d4c8"/><rect x="${x}" y="65" width="${width}" height="7" rx="3" fill="${palette[i % palette.length]}"/><text x="${x + 15}" y="105" fill="#303630" font-size="14" font-weight="700">${xmlText(item.label)}</text><text x="${x + 15}" y="132" fill="#616860" font-size="12">${xmlText(item.value)}</text>`;
+    }).join('');
+  } else {
+    const nodeW = Math.min(150, Math.floor(570 / items.length));
+    const gap = (640 - items.length * nodeW) / (items.length + 1);
+    shapes = items.map((item, i) => {
+      const x = gap + i * (nodeW + gap), y = spec.kind === 'cycle' ? (i % 2 ? 106 : 76) : 86;
+      const connector = i < items.length - 1 ? `<path d="M ${x + nodeW + 3} ${y + 41} H ${x + nodeW + gap - 6}" stroke="#aaa99d" stroke-width="2" marker-end="url(#arrow)"/>` : '';
+      return `${connector}<rect x="${x}" y="${y}" width="${nodeW}" height="82" rx="14" fill="#f3f0e8" stroke="#d9d4c8"/><circle cx="${x + 17}" cy="${y + 18}" r="5" fill="${palette[i % palette.length]}"/><text x="${x + 14}" y="${y + 40}" fill="#303630" font-size="13" font-weight="700">${xmlText(item.label)}</text><text x="${x + 14}" y="${y + 61}" fill="#616860" font-size="11">${xmlText(item.value)}</text>`;
+    }).join('');
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 220"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0 L0 6 L7 3 z" fill="#aaa99d"/></marker></defs><rect width="640" height="220" rx="18" fill="#faf9f5"/>${heading}${shapes}</svg>`;
+}
+function showFreeVisual(kind, spec, caption) {
+  const wrap = $(kind + 'Visual'), img = $(kind + 'VisualImg');
+  const svg = freeDiagramSvg(spec);
+  if (!svg) { wrap.hidden = true; return; }
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  img.alt = caption || (curLang() === 'kk' ? 'Оқу сызбасы' : 'Учебная схема');
+  img.hidden = false; wrap.hidden = false; wrap.classList.remove('loading');
+  $(kind + 'VisualLoading').hidden = true;
+  $(kind + 'VisualCaption').textContent = caption || '';
+}
+function moveTheory(direction) {
+  const target = theoryPageIndex + direction;
+  if (target >= 0 && target < theoryPages.length) { theoryPageIndex = target; renderTheoryWindow(); return; }
+  if (direction > 0 && target === theoryPages.length) beginPractice();
+}
+async function beginPractice() {
+  $('theoryPane').style.display = 'none'; $('taskPane').style.display = 'block';
+  $('lessonGrid').classList.add('task-only'); setStep(2);
+  if (!attemptNum) await nextTurn(null);
+}
+function returnToTheory() {
+  $('taskPane').style.display = 'none'; $('theoryPane').style.display = 'block';
+  $('lessonGrid').classList.remove('task-only'); setStep(1); renderTheoryWindow();
+}
 async function showLessonVisual(kind, prompt, caption) {
   const state = visualState[kind];
   const wrap = $(kind + 'Visual'), img = $(kind + 'VisualImg');
@@ -303,7 +389,26 @@ async function loadTopic() {
   try { localStorage.setItem('tasked_last', JSON.stringify({ id: t.id, title: t.title })); } catch (e) {}
   $('crumbs').innerHTML = '';
   $('crumbs').append(Object.assign(document.createElement('b'), { textContent: 'Каталог' }), ' / ' + t.title);
-  nextTurn(null);
+  $('theoryPane').style.display = 'block'; $('taskPane').style.display = 'none'; $('lessonGrid').classList.remove('task-only');
+  $('theoryBody').textContent = tr('theoryPreparing');
+  let prepared = null;
+  for (let attempt = 0; attempt < 60; attempt++) {
+    try {
+      const response = await fetch(`/api/topics/${encodeURIComponent(topicId)}/theory?lang=${curLang()}`);
+      const result = await response.json();
+      if (response.ok && result.status === 'ready') { prepared = result.theory[curLang()] || result.theory.ru; break; }
+      if (!response.ok && response.status !== 202) throw new Error('theory unavailable');
+    } catch (e) { $('theoryBody').textContent = tr('theoryUnavailable'); return; }
+    await new Promise(resolve => setTimeout(resolve, 900));
+  }
+  if (!prepared || !Array.isArray(prepared.pages) || prepared.pages.length < 2) { $('theoryBody').textContent = tr('theoryUnavailable'); return; }
+  theoryPages = prepared.pages.slice(0, 3).map((page, index) => ({
+    title: page.title || '', text: index === 0 ? `${prepared.intro || ''}\n\n` : '',
+    detail: page.text || '', example: page.example || '', key: page.key || '', visualSpec: page.visualSpec,
+  }));
+  theoryPageIndex = 0;
+  lastTheory = [prepared.intro, ...theoryPages.flatMap(page => [page.title, page.detail, page.example, page.key])].filter(Boolean).join('\n');
+  renderTheoryWindow();
 }
 
 async function nextTurn(answer) {
@@ -322,7 +427,7 @@ async function nextTurn(answer) {
     });
     const data = await r.json();
     if (!r.ok || data.error) {
-      const map = { topic_not_found: tr('errTopic'), bad_request: tr('errTopic'), ai_error: tr('errAi') };
+      const map = { topic_not_found: tr('errTopic'), bad_request: tr('errTopic'), ai_error: tr('errAi'), unauthorized: tr('authRequired') };
       $('status').textContent = map[data.error] || tr('errAi');
       return;
     }
@@ -331,7 +436,7 @@ async function nextTurn(answer) {
     if (data.theory || (Array.isArray(data.theoryBlocks) && data.theoryBlocks.length)) {
       lastTheory = [data.theory, ...(data.theoryBlocks || []).map(block => `${block.title || ''}. ${block.text || ''}`)].filter(Boolean).join('\n');
       renderTheory(data);
-      showLessonVisual('theory', data.theoryVisualPrompt, data.theoryVisualCaption);
+      // Legacy saved lessons may still include generated theory; new lessons use prefetched theory pages.
     }
     if (data.feedback) {
       const fb = $('feedbackBox');
@@ -341,10 +446,11 @@ async function nextTurn(answer) {
     }
     if (data.task) {
       attemptNum++;
+      $('theoryPane').style.display = 'none'; $('taskPane').style.display = 'block'; $('lessonGrid').classList.add('task-only');
       setStep(2);
       lastTask = data.task;
       renderOptions(data);
-      showLessonVisual('task', data.visualPrompt, data.visualCaption);
+      showFreeVisual('task', data.visualSpec, data.visualCaption);
       $('stTaskN').textContent = '#' + attemptNum;
       $('taskNum').textContent = tr('taskN') + attemptNum;
       $('taskText').textContent = data.task;
@@ -382,14 +488,17 @@ async function nextTurn(answer) {
 async function submitAnswer() {
   if (turnPending) return;
   let a;
-  if (curKind === 'choice' || curKind === 'true_false') {
+  if (['choice', 'true_false', 'scenario_choice', 'evidence_choice', 'table_read'].includes(curKind)) {
     const sel = document.querySelector('input[name="opt"]:checked');
     if (!sel) { $('status').textContent = tr('pickOpt'); return; }
     a = sel.value;
-  } else if (curKind === 'order') {
+  } else if (curKind === 'multiple_select') {
+    a = [...document.querySelectorAll('#optBox input[type="checkbox"]:checked')].map(input => input.value);
+    if (!a.length) { $('status').textContent = tr('pickOpt'); return; }
+  } else if (curKind === 'ordering') {
     a = [...document.querySelectorAll('#orderBox .order-item')].map(item => item.dataset.value);
     if (!a.length) { $('status').textContent = tr('writeAns'); return; }
-  } else if (curKind === 'match') {
+  } else if (curKind === 'matching' || curKind === 'categorize') {
     a = {};
     let complete = true;
     document.querySelectorAll('#matchBox select').forEach(select => {
@@ -404,15 +513,16 @@ async function submitAnswer() {
   nextTurn(a);
 }
 function renderOptions(data) {
-  curKind = ['choice', 'true_false', 'order', 'match', 'short'].includes(data.taskType) ? data.taskType : 'short';
+  const formats = ['choice','true_false','multiple_select','ordering','matching','short_answer','fill_blank','numeric','categorize','diagnose_error','predict','scenario_choice','evidence_choice','table_read','explain'];
+  curKind = formats.includes(data.taskType) ? data.taskType : 'short_answer';
   const box = $('optBox'), order = $('orderBox'), match = $('matchBox');
   box.replaceChildren(); order.replaceChildren(); match.replaceChildren();
   box.style.display = order.style.display = match.style.display = 'none';
   $('answerInput').style.display = 'none';
   $('answerLbl').style.display = 'block';
-  $('taskFormat').textContent = tr('type' + (curKind === 'true_false' ? 'TrueFalse' : curKind[0].toUpperCase() + curKind.slice(1)));
+  $('taskFormat').textContent = tr('format_' + curKind);
 
-  if (curKind === 'choice' || curKind === 'true_false') {
+  if (['choice', 'true_false', 'scenario_choice', 'evidence_choice', 'table_read', 'multiple_select'].includes(curKind)) {
     const options = curKind === 'true_false' ? [
       { value: 'true', label: tr('trueOpt') }, { value: 'false', label: tr('falseOpt') },
     ] : (Array.isArray(data.options) ? data.options : []).map(value => ({ value, label: value }));
@@ -420,15 +530,15 @@ function renderOptions(data) {
       const l = document.createElement('label');
       l.className = 'opt';
       const r = document.createElement('input');
-      r.type = 'radio'; r.name = 'opt'; r.value = o.value;
+      r.type = curKind === 'multiple_select' ? 'checkbox' : 'radio'; r.name = curKind === 'multiple_select' ? 'multiOpt' : 'opt'; r.value = o.value;
       const s = document.createElement('span');
       s.textContent = o.label;
       l.append(r, s);
       box.appendChild(l);
     });
     box.style.display = 'flex';
-    $('answerLbl').textContent = tr('chooseOpt');
-  } else if (curKind === 'order') {
+    $('answerLbl').textContent = curKind === 'multiple_select' ? tr('selectAll') : tr('chooseOpt');
+  } else if (curKind === 'ordering') {
     const items = shuffled(Array.isArray(data.items) ? data.items : []);
     if (items.length > 1 && items.every((value, index) => value === data.items[index])) items.push(items.shift());
     items.forEach((value, index) => {
@@ -444,7 +554,7 @@ function renderOptions(data) {
       row.append(label, controls); order.appendChild(row);
     });
     order.style.display = 'grid'; $('answerLbl').textContent = tr('typeOrder');
-  } else if (curKind === 'match') {
+  } else if (curKind === 'matching' || curKind === 'categorize') {
     const pairs = Array.isArray(data.pairs) ? data.pairs : [];
     const correctOrder = pairs.map(pair => pair.right);
     const choices = shuffled(correctOrder);
@@ -457,10 +567,12 @@ function renderOptions(data) {
       choices.forEach(value => { const option = document.createElement('option'); option.value = value; option.textContent = value; select.appendChild(option); });
       row.append(left, select); match.appendChild(row);
     });
-    match.style.display = 'grid'; $('answerLbl').textContent = tr('typeMatch');
+    match.style.display = 'grid'; $('answerLbl').textContent = curKind === 'categorize' ? tr('format_categorize') : tr('format_matching');
   } else {
     $('answerInput').style.display = 'block';
-    $('answerLbl').textContent = tr('yourAnswer');
+    $('answerLbl').textContent = tr('answer_' + curKind) || tr('yourAnswer');
+    $('answerInput').inputMode = curKind === 'numeric' ? 'decimal' : 'text';
+    $('answerInput').placeholder = curKind === 'numeric' ? tr('numericPh') : tr('answerPh');
   }
 }
 function moveOrderItem(row, direction) {
