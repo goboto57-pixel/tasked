@@ -629,6 +629,19 @@ input, textarea, select { background: var(--card); }
   .hero .cta-row .btn { flex: 1 1 100%; }
   .grid { grid-template-columns: 1fr; }
 }
+@media (max-width: 640px) {
+  /* The catalog and its first action should stay close to the headline. */
+  .hero .steps { display: none; }
+}
+[data-theme="light"] .brand img,
+[data-theme="light"] .footer img,
+[data-theme="light"] #langGate .logo {
+  filter: brightness(0) saturate(100%) opacity(.78);
+}
+.topbar .search input { border-radius: 11px; }
+.card.clickable .btn { align-self: flex-start; }
+.card .meta { margin-top: 2px; }
+.section-head { align-items: center; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }

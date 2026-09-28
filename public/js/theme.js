@@ -15,6 +15,8 @@
   }
   function apply(t) {
     document.documentElement.dataset.theme = t;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = t === 'light' ? '#f5f4ef' : '#1d211f';
     paintBtn();
   }
   window.toggleTheme = () => {
