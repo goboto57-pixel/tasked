@@ -56,7 +56,7 @@
       </div>
       <div class="theory-navigation">
         <button id="theoryPrev" class="btn" onclick="moveTheory(-1)" disabled>Назад</button>
-        <span class="muted" id="theoryPageLabel">Окно 1 из 2</span>
+        <span class="muted" id="theoryPageLabel">Окно 1 из 3</span>
         <button id="theoryNext" class="btn primary" onclick="moveTheory(1)">Следующее окно</button>
       </div>
     </div>
@@ -416,7 +416,7 @@ async function nextTurn(answer) {
   const answeredTaskNumber = answer !== null && answer !== undefined ? attemptNum : null;
   turnPending = true;
   lastAnswer = answer;
-  $('status').textContent = tr('aiThinking');
+    $('status').textContent = tr(answer === null || answer === undefined ? 'aiThinking' : 'checkingAnswer');
   $('submitBtn').disabled = true;
   $('dictBtn').disabled = true;
   $('feedbackBox').style.display = 'none';
@@ -427,7 +427,7 @@ async function nextTurn(answer) {
     });
     const data = await r.json();
     if (!r.ok || data.error) {
-      const map = { topic_not_found: tr('errTopic'), bad_request: tr('errTopic'), ai_error: tr('errAi'), unauthorized: tr('authRequired') };
+      const map = { topic_not_found: tr('errTopic'), bad_request: tr('errTopic'), ai_error: tr('errAi'), grading_unavailable: tr('gradingUnavailable'), unauthorized: tr('authRequired') };
       $('status').textContent = map[data.error] || tr('errAi');
       return;
     }

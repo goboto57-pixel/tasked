@@ -61,6 +61,7 @@ async function initDb() {
       description TEXT DEFAULT '',
       theory_cache JSONB,
       theory_status TEXT NOT NULL DEFAULT 'pending',
+      theory_version INT NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT now()
     );
     CREATE TABLE IF NOT EXISTS progress (
@@ -94,6 +95,8 @@ async function initDb() {
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS theory_override TEXT DEFAULT ''`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS theory_cache JSONB`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS theory_status TEXT NOT NULL DEFAULT 'pending'`);
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS theory_version INT NOT NULL DEFAULT 0`);
+  await pool.query(`UPDATE topics SET theory_cache=NULL, theory_status='pending' WHERE theory_version < 2 AND theory_cache IS NOT NULL`);
   await pool.query(`ALTER TABLE progress ADD COLUMN IF NOT EXISTS student_id INT REFERENCES students(id) ON DELETE CASCADE`);
   await pool.query(`ALTER TABLE progress ADD COLUMN IF NOT EXISTS completed BOOLEAN DEFAULT false`);
   await pool.query(`
@@ -522,11 +525,11 @@ app.get('/api/topics', async (req, res) => {
 });
 
 app.get('/api/topics/:id/theory', authStudent, async (req, res) => {
-  const result = await pool.query('SELECT id, title, description, theory_override, theory_cache, theory_status FROM topics WHERE id=$1', [req.params.id]);
+  const result = await pool.query('SELECT id, title, description, theory_override, theory_cache, theory_status, theory_version FROM topics WHERE id=$1', [req.params.id]);
   const topic = result.rows[0];
   if (!topic) return res.status(404).json({ error: 'topic_not_found' });
-  if (!topic.theory_cache && topic.theory_status === 'pending') generateAndCacheTopicTheory(topic).catch(error => console.error('Topic theory generation failed:', error.message));
-  if (!topic.theory_cache) return res.status(topic.theory_status === 'failed' ? 503 : 202).json({ status: topic.theory_status });
+  if (Number(topic.theory_version) < 2 && !['generating', 'failed'].includes(topic.theory_status)) generateAndCacheTopicTheory(topic).catch(error => console.error('Topic theory generation failed:', error.message));
+  if (!topic.theory_cache || Number(topic.theory_version) < 2) return res.status(topic.theory_status === 'failed' ? 503 : 202).json({ status: topic.theory_status });
   res.set('Cache-Control', 'private, no-store').json({ status: 'ready', theory: topic.theory_cache });
 });
 
@@ -557,7 +560,7 @@ app.patch('/api/topics/:id', authTeacher, async (req, res) => {
       req.params.id,
     ]);
   if (r.rows[0].title !== t.title || r.rows[0].description !== t.description || r.rows[0].theory_override !== t.theory_override) {
-    pool.query("UPDATE topics SET theory_cache=NULL, theory_status='pending' WHERE id=$1", [req.params.id])
+    pool.query("UPDATE topics SET theory_cache=NULL, theory_status='pending', theory_version=0 WHERE id=$1", [req.params.id])
       .then(() => generateAndCacheTopicTheory(r.rows[0]))
       .catch(error => console.error('Topic theory refresh failed:', error.message));
   }
@@ -851,7 +854,7 @@ async function generateTopicTheoryJob(topic) {
   await pool.query("UPDATE topics SET theory_status='generating' WHERE id=$1", [topic.id]);
   try {
     const theory = await geminiJson([
-      { role: 'system', content: 'Ты опытный школьный педагог. Подготовь короткую, точную теорию для самостоятельного ученика: понятно, с примерами, без воды. Верни JSON на русском и казахском языках. В каждом языке: intro (до 220 знаков), pages — ровно 2 отдельные учебные карточки с заголовком, объяснением до 450 знаков, мини-примером, одним ключевым выводом и простой векторной учебной иллюстрацией visualSpec {kind: sequence|cycle|compare|bars|concept, title, items:[{label,value}]} на 2–5 пунктов. Не используй внешние картинки: схема визуализируется локально. Подстрой содержание под возраст школьника и тему, без вымышленных фактов. JSON: {"ru":{"intro":"","pages":[{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"concept","title":"","items":[{"label":"","value":""},{"label":"","value":""}] }},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"sequence","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}}]},"kk":{"intro":"","pages":[{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"concept","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"sequence","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}}]}}' },
+      { role: 'system', content: 'Ты — автор содержательных школьных мини-уроков, а не генератор конспектов. Верни JSON на русском и казахском языках. В каждом языке: intro и ровно 3 последовательные pages. Строй обучение так: 1) что это за явление/идея и зачем она нужна; 2) как рассуждать или применять её — подробно разобранный пример по шагам; 3) перенос в новый контекст, границы применения и типичная ошибка с её исправлением. На каждой странице: title, text до 750 знаков с точными понятиями и связью причин/следствий, example с реальным разбором или применением, key как короткий вывод, и visualSpec {kind: sequence|cycle|compare|bars|concept, title, items:[{label,value}]} на 2–5 пунктов. Не подменяй объяснение лозунгами и определениями в одну строку. Используй конкретику именно этой темы; для формальных тем проверь обозначения и расчёт, для ИИ различай методы, данные, обучение и вывод. Не выдумывай факты. Материал учителя учитывай в первую очередь. Схемы строятся локально из visualSpec, внешние изображения не запрашивай. JSON: {"ru":{"intro":"","pages":[{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"concept","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"sequence","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"compare","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}}]},"kk":{"intro":"","pages":[{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"concept","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"sequence","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"compare","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}}]}}' },
       { role: 'user', content: `Тема: ${topic.title}\nОписание: ${topic.description || ''}\nМатериал учителя: ${topic.theory_override || 'не указан'}` },
     ], 2500);
     const clean = {};
@@ -860,14 +863,14 @@ async function generateTopicTheoryJob(topic) {
       clean[lang] = {
         intro: String(version?.intro || '').slice(0, 260),
         pages: (Array.isArray(version?.pages) ? version.pages : []).slice(0, 3).map(page => ({
-          title: String(page?.title || '').slice(0, 100), text: String(page?.text || '').slice(0, 600),
+          title: String(page?.title || '').slice(0, 100), text: String(page?.text || '').slice(0, 850),
           example: String(page?.example || '').slice(0, 400), key: String(page?.key || '').slice(0, 240),
           visualSpec: cleanVisualSpec(page?.visualSpec) || { kind: 'concept', title: String(page?.title || '').slice(0, 100), items: [{ label: String(page?.title || 'Тема').slice(0, 60), value: 'идея' }, { label: 'Пример', value: String(page?.key || page?.text || '').slice(0, 60) }] },
         })),
       };
-      if (clean[lang].pages.length < 2 || !clean[lang].intro) throw new Error(`Incomplete ${lang} theory`);
+      if (clean[lang].pages.length < 3 || !clean[lang].intro) throw new Error(`Incomplete ${lang} theory`);
     }
-    await pool.query("UPDATE topics SET theory_cache=$1::jsonb, theory_status='ready' WHERE id=$2", [JSON.stringify(clean), topic.id]);
+    await pool.query("UPDATE topics SET theory_cache=$1::jsonb, theory_status='ready', theory_version=2 WHERE id=$2", [JSON.stringify(clean), topic.id]);
   } catch (error) {
     await pool.query("UPDATE topics SET theory_status='failed' WHERE id=$1", [topic.id]).catch(() => {});
     throw error;
@@ -931,7 +934,9 @@ const SYSTEM_RU = `Ты — сильный школьный учитель и а
 ВИЗУАЛЫ: подготовь visualPrompt как краткое смысловое описание и visualSpec как структурированные данные локальной SVG-схемы (kind: sequence/cycle/compare/bars/concept; title; 2–5 items с label/value). Схема должна показывать ход процесса, отношения или данные задачи; подписи и числа должны совпадать с условием. Это векторная иллюстрация, а не фотография. Промпт должен описывать один чёткий учебный кадр, спокойную книжную иллюстрацию/инфографику без неона, без декоративного текста и без готового ответа. Само задание должно содержать все точные подписи/числа, нужные для решения: не полагайся на надписи внутри изображения. Добавь короткие подписи к изображениям. Не используй случайные стоковые сцены вместо точной учебной визуализации.
 ПРОВЕРКА: оцени только последний ответ по последнему заданию и его формату. Допускай эквивалентные записи и ясные мелкие опечатки. Будь строгим к смыслу, но не к способу записи. feedback кратко говорит, что понял ученик, и что поправить; при верном ответе объясни почему это верно, а не просто хвали.
 АДАПТАЦИЯ: уровень 1–5 дан во входе. После ошибки объясни слабое место и дай на том же навыке другую, проще устроенную задачу. После верного ответа проверь перенос навыка в новый контекст, затем постепенно усложняй. Веди журнал последних форматов и не повторяй предыдущий тип без причины. Не перескакивай с темы.
-НЕ ЗАВЕРШАЙ УРОК САМОСТОЯТЕЛЬНО. Верни только валидный JSON с полями: {"theory":"короткий лид, только в начале","theoryBlocks":[{"title":"...","text":"..."}],"theoryVisualPrompt":"...","theoryVisualCaption":"...","feedback":"...","task":"...","taskType":"choice|true_false|multiple_select|ordering|matching|short_answer|fill_blank|numeric|categorize|diagnose_error|predict|scenario_choice|evidence_choice|table_read|explain","options":["..."],"items":["..."],"pairs":[{"left":"...","right":"..."}],"visualPrompt":"...","visualCaption":"...","visualSpec":{"kind":"sequence|cycle|compare|bars|concept","title":"...","items":[{"label":"...","value":"..."},{"label":"...","value":"..."}]},"correct":true|false|null}. Неиспользуемые массивы верни пустыми; на первом ходе correct=null и feedback пустой.`;
+КЛЮЧ ОТВЕТА: для каждого задания обязательно заполни answerKey. Для choice/true_false/scenario_choice/evidence_choice/table_read укажи expected как точный текст правильного варианта. Для multiple_select — expected как массив точных текстов всех правильных вариантов. Для ordering — массив элементов в правильном порядке. Для matching/categorize — объект «левая часть»: «правильная правая часть/категория». Для numeric — число (без единицы измерения) и tolerance. Для коротких открытых ответов заполни expected и accepted массивом разумных смысловых формулировок. Для explain/diagnose_error/predict задай эталонный ответ и rubric из 1–3 проверяемых смысловых критериев; не делай эталон неоднозначным. Никогда не ставь options, answerKey и формулировку вопроса в противоречие.
+СЛОЖНОСТЬ: первый вопрос — диагностический уровня 3/5, не тривиальный. Уровень 1 — базовый шаг с опорой; 2 — применение правила; 3 — перенос на новый контекст или 2 шага рассуждения; 4 — сравнение стратегий, данных или исключений; 5 — обоснованный вывод/многошаговая задача. Не путай сложность с длинным текстом. Не используй очевидные отвлекающие варианты, вопросы на угадывание термина или задания, где достаточно переписать определение. Каждый правильный вариант должен быть обоснован условием, а проверяемый ключ должен совпадать с ним.
+НЕ ЗАВЕРШАЙ УРОК САМОСТОЯТЕЛЬНО. Верни только валидный JSON с полями: {"theory":"короткий лид, только в начале","theoryBlocks":[{"title":"...","text":"..."}],"theoryVisualPrompt":"...","theoryVisualCaption":"...","feedback":"...","task":"...","taskType":"choice|true_false|multiple_select|ordering|matching|short_answer|fill_blank|numeric|categorize|diagnose_error|predict|scenario_choice|evidence_choice|table_read|explain","options":["..."],"items":["..."],"pairs":[{"left":"...","right":"..."}],"answerKey":{"expected":"строка, число, массив или объект соответствующего формату","accepted":["допустимая формулировка"],"rubric":"критерии для свободного ответа","rationale":"короткое объяснение","tolerance":0},"visualPrompt":"...","visualCaption":"...","visualSpec":{"kind":"sequence|cycle|compare|bars|concept","title":"...","items":[{"label":"...","value":"..."},{"label":"...","value":"..."}]},"correct":true|false|null}. Неиспользуемые массивы верни пустыми; на первом ходе correct=null и feedback пустой.`;
 
 const SYSTEM_KK = `Сен — тәжірибелі мектеп мұғалімі әрі интерактивті сабақ авторысың. Тек қазақша жаз, қарапайым әрі нақты тіл қолдан; эмодзи, еркелету сөздері мен ұзақ дәрістен аулақ бол. Сабақ тірі сабақтай сезілсін: қысқа ой → көрнекі мысал → оқушы әрекеті → нақты кері байланыс.
 ТЕОРИЯ САБАҚТАН БҰРЫН БӨЛЕК ДАЙЫНДАЛАДЫ. Практика жауаптарында theory, theoryBlocks, theoryVisualPrompt және theoryVisualCaption өрістерін бос қалдыр. Тек келесі интерактивті тапсырманы жаса.
@@ -939,7 +944,9 @@ const SYSTEM_KK = `Сен — тәжірибелі мектеп мұғалімі
 КӨРНЕКІ МАТЕРИАЛ: visualPrompt қысқа мағыналық сипаттама болсын, ал visualSpec жергілікті SVG сызбасын құратын деректерді берсін (kind: sequence/cycle/compare/bars/concept; title; label/value бар 2–5 item). Сызба үдерісті, байланысты не есеп деректерін көрсетсін; белгілер мен сандар шартқа сай болсын. Бұл — векторлық көрнекілік, фото емес. Бір нақты оқу көрінісін сипатта; сабырлы оқулық иллюстрациясы/инфографикасы болсын, неонсыз, сәндік жазусыз және дайын жауапсыз. Шешуге керекті нақты атаулар мен сандар тапсырма мәтінінде болсын — суреттегі жазуға тәуелді болма. Қысқа сурет сипаттамасын да бер. Дәл пәндік көрнекіліктің орнына кездейсоқ фотосурет ұсынба.
 ТЕКСЕРУ: тек соңғы жауапты соңғы тапсырма және оның форматы бойынша бағала. Мағынасы бірдей жазылым мен түсінікті ұсақ қатені қабылда. Мағынаға мұқият бол, жазу тәсіліне емес. feedback оқушының нені түсінгенін және нені түзету керегін қысқаша айтсын; дұрыс болса, неге дұрыс екенін түсіндір.
 БЕЙІМДЕУ: кірісте 1–5 деңгей беріледі. Қате болса, әлсіз тұсты түсіндіріп, сол дағдыға басқа әрі жеңіл тапсырма бер. Дұрыс болса, дағдыны жаңа жағдайда тексеріп, кейін біртіндеп күрделендір. Соңғы форматтарды қарап, себепсіз бір типті қайталама. Тақырыптан ауытқыма.
-Сабақты өз бетіңше аяқтама. Тек валидті JSON қайтар: {"theory":"қысқа кіріспе, тек басында","theoryBlocks":[{"title":"...","text":"..."}],"theoryVisualPrompt":"...","theoryVisualCaption":"...","feedback":"...","task":"...","taskType":"choice|true_false|multiple_select|ordering|matching|short_answer|fill_blank|numeric|categorize|diagnose_error|predict|scenario_choice|evidence_choice|table_read|explain","options":["..."],"items":["..."],"pairs":[{"left":"...","right":"..."}],"visualPrompt":"...","visualCaption":"...","visualSpec":{"kind":"sequence|cycle|compare|bars|concept","title":"...","items":[{"label":"...","value":"..."},{"label":"...","value":"..."}]},"correct":true|false|null}. Қолданылмайтын массивтер бос болсын; бірінші қадамда correct=null, feedback бос.`;
+ЖАУАП КІЛТІ: әр тапсырмаға answerKey міндетті түрде толтыр. choice/true_false/scenario_choice/evidence_choice/table_read үшін expected — дұрыс нұсқаның дәл мәтіні. multiple_select үшін expected — барлық дұрыс жауап мәтіндерінің массиві. ordering үшін дұрыс реттегі массив. matching/categorize үшін «сол жақ элемент»: «дұрыс жұбы/санаты» объектісі. numeric үшін tolerance мәнімен сан. Ашық қысқа жауапқа expected және мағынасы бірдей accepted тұжырымдарын бер. explain/diagnose_error/predict үшін эталон жауап пен 1–3 тексерілетін өлшемнен тұратын rubric бер. answerKey, нұсқалар мен сұрақ бір-біріне қайшы болмасын.
+КҮРДЕЛІЛІК: бірінші сұрақ 3/5 деңгейінде болсын, тривиалды болмасын. 1 — тірекпен негізгі қадам; 2 — ережені қолдану; 3 — жаңа жағдайға көшіру не екі қадамды ойлау; 4 — стратегияларды, деректерді не ерекшеліктерді салыстыру; 5 — негізделген қорытынды/көпқадамды есеп. Ұзақ мәтін күрделілік емес. Анық емес алаңдатқыштар мен анықтаманы көшіруді талап ететін сұрақтарды қолданба.
+Сабақты өз бетіңше аяқтама. Тек валидті JSON қайтар: {"theory":"қысқа кіріспе, тек басында","theoryBlocks":[{"title":"...","text":"..."}],"theoryVisualPrompt":"...","theoryVisualCaption":"...","feedback":"...","task":"...","taskType":"choice|true_false|multiple_select|ordering|matching|short_answer|fill_blank|numeric|categorize|diagnose_error|predict|scenario_choice|evidence_choice|table_read|explain","options":["..."],"items":["..."],"pairs":[{"left":"...","right":"..."}],"answerKey":{"expected":"жол, сан, массив немесе форматқа сай объект","accepted":["қабылданатын тұжырым"],"rubric":"ашық жауап критерийлері","rationale":"қысқа түсініктеме","tolerance":0},"visualPrompt":"...","visualCaption":"...","visualSpec":{"kind":"sequence|cycle|compare|bars|concept","title":"...","items":[{"label":"...","value":"..."},{"label":"...","value":"..."}]},"correct":true|false|null}. Қолданылмайтын массивтер бос болсын; бірінші қадамда correct=null, feedback бос.`;
 
 const SYSTEM_VOICE = {
   ru: 'Ты — спокойный и внимательный учитель-репетитор. Отвечай на русском, без эмодзи, уменьшительных слов и лишних вступлений. Сначала прямо ответь на вопрос ученика, затем при необходимости объясни одним простым примером. Держи ответ в пределах 2–4 коротких предложений и не повторяй вопрос.',
@@ -971,7 +978,7 @@ function masteryState(outcomes) {
 
 function targetDifficulty(entries, correct) {
   const last = entries[entries.length - 1];
-  const current = Number(last?.difficulty) || 1;
+  const current = Number(last?.difficulty) || 2.5;
   if (correct === null) return Math.max(1, Math.min(5, current));
   const change = correct ? 0.5 : -0.75;
   return Math.max(1, Math.min(5, Math.round((current + change) * 2) / 2));
@@ -980,6 +987,25 @@ function targetDifficulty(entries, correct) {
 const TASK_FORMATS = ['choice', 'true_false', 'multiple_select', 'ordering', 'matching', 'short_answer', 'fill_blank', 'numeric', 'categorize', 'diagnose_error', 'predict', 'scenario_choice', 'evidence_choice', 'table_read', 'explain'];
 const TASK_OPTION_FORMATS = new Set(['choice', 'true_false', 'scenario_choice', 'evidence_choice', 'table_read']);
 const TASK_PAIR_FORMATS = new Set(['matching', 'categorize']);
+const answerText = (value, max = 500) => String(value ?? '').trim().slice(0, max);
+function cleanAnswerKey(input) {
+  if (input === undefined || input === null) return null;
+  const value = input && typeof input === 'object' && !Array.isArray(input)
+    ? (input.expected ?? input.answer ?? input.value ?? null)
+    : input;
+  const clean = item => typeof item === 'object' && item !== null
+    ? Object.fromEntries(Object.entries(item).slice(0, 8).map(([k, v]) => [answerText(k, 120), answerText(v, 180)]))
+    : answerText(item, 300);
+  const accepted = Array.isArray(input?.accepted) ? input.accepted.slice(0, 8).map(clean).filter(Boolean) : [];
+  const expected = Array.isArray(value) ? value.slice(0, 8).map(clean) : clean(value);
+  return {
+    expected,
+    accepted,
+    rubric: answerText(input?.rubric, 700),
+    rationale: answerText(input?.rationale, 500),
+    tolerance: Number.isFinite(Number(input?.tolerance)) ? Math.max(0, Math.min(Number(input.tolerance), 1e6)) : null,
+  };
+}
 function cleanVisualSpec(input) {
   if (!input || typeof input !== 'object') return null;
   const kinds = new Set(['sequence', 'cycle', 'compare', 'bars', 'concept']);
@@ -1018,11 +1044,102 @@ function normalizeLessonTurn(value, firstTurn) {
     visualPrompt: text(ai.visualPrompt, 1400),
     visualCaption: text(ai.visualCaption, 240),
     visualSpec: cleanVisualSpec(ai.visualSpec),
+    answerKey: cleanAnswerKey(ai.answerKey),
     correct: typeof ai.correct === 'boolean' ? ai.correct : null,
   };
 }
 
-async function adaptiveTurn({ topic, lang, history, answer, difficulty, firstTurn, teacherExamples = [] }) {
+function comparable(value) {
+  return String(value ?? '').normalize('NFKC').toLocaleLowerCase('ru')
+    .replace(/ё/g, 'е').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ')
+    .trim().replace(/^[\s\p{P}\p{S}]+|[\s\p{P}\p{S}]+$/gu, '');
+}
+function numericValue(value) {
+  const compact = String(value ?? '').replace(/\s/g, '').replace(',', '.');
+  const fraction = compact.match(/^([+-]?\d+)\/([+-]?\d+)$/);
+  if (fraction && Number(fraction[2]) !== 0) return Number(fraction[1]) / Number(fraction[2]);
+  const match = compact.match(/[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/i);
+  return match ? Number(match[0]) : NaN;
+}
+function exactSame(a, b) {
+  return comparable(a) !== '' && comparable(a) === comparable(b);
+}
+function sameSet(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  const left = a.map(comparable).sort(), right = b.map(comparable).sort();
+  return left.every((value, index) => value && value === right[index]);
+}
+function gradeDeterministically(task, submitted) {
+  const key = task.answerKey;
+  if (!key) return null;
+  const expected = key.expected;
+  if (TASK_OPTION_FORMATS.has(task.taskType)) {
+    const answer = String(submitted ?? '');
+    const expectedText = String(expected ?? '');
+    const opts = Array.isArray(task.options) ? task.options : [];
+    const choiceIndex = value => {
+      const token = comparable(value);
+      const byText = opts.findIndex(option => exactSame(option, token));
+      if (byText >= 0) return byText;
+      if (/^[1-9]\d?$/.test(token)) return Number(token) - 1;
+      const letters = { a: 0, а: 0, b: 1, б: 1, c: 2, в: 2, d: 3, г: 3, e: 4, д: 4, f: 5, е: 5 };
+      return Object.prototype.hasOwnProperty.call(letters, token) ? letters[token] : -1;
+    };
+    const actualIndex = choiceIndex(answer), expectedIndex = choiceIndex(expectedText);
+    const correct = expectedIndex >= 0 && expectedIndex < opts.length && actualIndex === expectedIndex;
+    return { correct: Boolean(correct), basis: 'key' };
+  }
+  if (task.taskType === 'multiple_select') {
+    const submittedItems = Array.isArray(submitted) ? submitted : [submitted];
+    const expectedItems = Array.isArray(expected) ? expected : [expected];
+    return { correct: sameSet(submittedItems, expectedItems), basis: 'key' };
+  }
+  if (task.taskType === 'ordering') {
+    const submittedItems = Array.isArray(submitted) ? submitted : String(submitted ?? '').split(/\s*(?:>|→|,)\s*/);
+    return { correct: Array.isArray(expected) && submittedItems.length === expected.length && expected.every((item, index) => exactSame(item, submittedItems[index])), basis: 'key' };
+  }
+  if (TASK_PAIR_FORMATS.has(task.taskType)) {
+    if (!submitted || typeof submitted !== 'object' || Array.isArray(submitted) || !expected || typeof expected !== 'object' || Array.isArray(expected)) return { correct: false, basis: 'key' };
+    const entries = Object.entries(expected);
+    return { correct: entries.length === Object.keys(submitted).length && entries.every(([left, right]) => exactSame(submitted[left], right)), basis: 'key' };
+  }
+  if (task.taskType === 'numeric') {
+    const actual = numericValue(submitted), wanted = numericValue(expected);
+    const tolerance = Number.isFinite(key.tolerance) ? key.tolerance : Math.max(1e-8, Math.abs(wanted) * 1e-6);
+    return { correct: Number.isFinite(actual) && Number.isFinite(wanted) && Math.abs(actual - wanted) <= tolerance, basis: 'key' };
+  }
+  const variants = [expected, ...(Array.isArray(key.accepted) ? key.accepted : [])].filter(value => typeof value === 'string' && value.trim());
+  if (variants.some(value => exactSame(submitted, value))) return { correct: true, basis: 'key' };
+  return null;
+}
+async function gradeOpenAnswer(task, submitted, lang) {
+  const key = task.answerKey || {};
+  const expected = key.expected ?? 'Сравни ответ с условием задания и оцени по критериям.';
+  const result = await geminiJson([
+    { role: 'system', content: lang === 'kk'
+      ? 'Сен оқушы жауабын әділ бағалайтын пән мұғалімісің. Бағалау өлшемін қолдан. Мағынасы дұрыс баламаларды қабылда, тек сөзбе-сөз сәйкес келмеуі үшін қатені белгілеме. Тек JSON қайтар: {"correct":true|false,"assessment":"Оқушы жауабындағы нақты дұрыс не жетіспейтін ой, бағалау сөздерінсіз","expected":"Қысқа дұрыс жауап"}. assessment ішінде «дұрыс/қате» деп үкім шығарма. Толық емес жауап — false.'
+      : 'Ты проверяешь ответ как справедливый учитель-предметник. Следуй критериям проверки. Принимай правильные ответы, сформулированные другими словами; не считай ошибкой только за несовпадение формулировки. Верни только JSON: {"correct":true|false,"assessment":"конкретно какой смысловой элемент ответа совпал или отсутствует, без словесного вердикта","expected":"краткий правильный ответ"}. В assessment не пиши «верно/неверно». Неполный ответ оцени false.' },
+    { role: 'user', content: JSON.stringify({ task: task.task, format: task.taskType, choices: task.options, answerKey: expected, accepted: key.accepted || [], rubric: key.rubric || '', studentAnswer: submitted }) },
+  ], 300);
+  return { correct: result.correct === true, assessment: answerText(result.assessment, 400), expected: answerText(result.expected || expected, 300), basis: 'ai' };
+}
+function formatGradingFeedback(grade, task, lang) {
+  const rawExpected = task.answerKey?.expected;
+  const expected = grade.expected || (typeof rawExpected === 'string' || typeof rawExpected === 'number'
+    ? String(rawExpected)
+    : Array.isArray(rawExpected) ? rawExpected.join(', ')
+      : rawExpected && typeof rawExpected === 'object' ? Object.entries(rawExpected).map(([left, right]) => `${left} → ${right}`).join('; ') : '');
+  const explanation = grade.assessment || task.answerKey?.rationale || task.answerKey?.rubric || '';
+  if (grade.correct) return lang === 'kk'
+    ? `Дұрыс. ${explanation || 'Жауабың тапсырманың шартына сәйкес келеді.'}`
+    : `Верно. ${explanation || 'Твой ответ соответствует условию задания.'}`;
+  const prefix = lang === 'kk' ? 'Әлі дұрыс емес.' : 'Пока неверно.';
+  const detail = explanation ? ` ${explanation}` : '';
+  const correct = expected ? (lang === 'kk' ? ` Дұрыс жауап: ${expected}.` : ` Правильный ответ: ${expected}.`) : '';
+  return `${prefix}${detail}${correct}`;
+}
+
+async function adaptiveTurn({ topic, lang, history, answer, grading = null, difficulty, firstTurn, teacherExamples = [] }) {
   const previousTaskEntry = [...parseTeacherEntries(history)].reverse().find(entry => entry.task);
   const priorOutcomes = parseTeacherEntries(history).filter(entry => typeof entry.correct === 'boolean').map(entry => entry.correct);
   const previousType = previousTaskEntry?.taskType;
@@ -1041,7 +1158,7 @@ async function adaptiveTurn({ topic, lang, history, answer, difficulty, firstTur
     answer: String(item.answer || '').slice(0, 120),
     options: Array.isArray(item.options) ? item.options.slice(0, 6).map(x => String(x).slice(0, 100)) : [],
   }));
-  const prompt = `Тема: ${String(topic.title || '').slice(0, 300)}\nОписание учителя: ${String(topic.description || '').slice(0, 1000)}\nМатериал учителя для точности: ${teacherReference || 'не задан'}\nПримеры заданий учителя для понимания охвата темы (не копируй дословно; сам придумай новое): ${JSON.stringify(examples)}\nСейчас обязательно выбери формат ${preferredType} (если объективно невозможно — выбери ближайший другой формат из списка, но избегай последних: ${recentTypes.join(', ')}).\nДоступные форматы: choice — выбрать один ответ; true_false — оценить утверждение; multiple_select — отметить все подходящие варианты (минимум 2 правильных); ordering — расположить 3–5 карточек по правилу; matching — соединить 3–4 пары; short_answer — короткий свободный ответ; fill_blank — вставить недостающее слово/значение в предложение; numeric — вычислить число с единицами; categorize — распределить 3–5 понятий по категориям, pairs содержит {left: понятие, right: категория}; diagnose_error — найти и объяснить конкретную ошибку в решении; predict — предсказать результат опыта/изменения условия; scenario_choice — принять решение в практической ситуации, 4 варианта; evidence_choice — выбрать вывод, подтверждённый данными/фактами, 4 варианта; table_read — ответить на вопрос по маленькой таблице, представленной прямо в тексте, 4 варианта; explain — объяснить причинно-следственную связь в 1–2 предложениях.\nПоследние форматы: ${recentTypes.join(', ') || 'нет'}.\nТекущий уровень сложности: ${difficulty} из 5. После правильного ответа немного усложни и перенеси навык в новый контекст; после ошибки объясни конкретную ошибку и дай другую, более доступную задачу на тот же навык.\nЧисло проверенных ответов до текущего: ${priorOutcomes.length}.\nПредыдущая задача: ${String(previousTaskEntry?.task || 'это начало практики').slice(0, 600)}\nОтвет ученика сейчас: ${answer === null ? 'ответа ещё не было' : String(answer).slice(0, 1000)}\nКонтекст последних ходов: ${JSON.stringify(context)}\n\nТеория подготовлена заранее. theory, theoryBlocks, theoryVisualPrompt, theoryVisualCaption верни пустыми. correct оцени последний ответ (${answer === null ? 'null, это начало' : 'true или false'}); feedback кратко поясняет результат. task всегда новая задача с понятным контекстом, а не сухой вопрос без ситуации. Заполни соответствующие options/items/pairs. Для форматов с массивом вариантов в options ответа правильные варианты не помечай и не выделяй. Для numeric/fill_blank/short_answer/diagnose_error/predict/explain задай проверяемый и достаточно короткий ответ. Не повторяй сюжет/цифры из недавних задач. Не завершай урок самостоятельно.`;
+  const prompt = `Тема: ${String(topic.title || '').slice(0, 300)}\nОписание учителя: ${String(topic.description || '').slice(0, 1000)}\nМатериал учителя для точности: ${teacherReference || 'не задан'}\nПримеры заданий учителя для понимания охвата темы (не копируй дословно; сам придумай новое): ${JSON.stringify(examples)}\nСейчас обязательно выбери формат ${preferredType} (если объективно невозможно — выбери ближайший другой формат из списка, но избегай последних: ${recentTypes.join(', ')}).\nДоступные форматы: choice — выбрать один ответ; true_false — оценить утверждение; multiple_select — отметить все подходящие варианты (минимум 2 правильных); ordering — расположить 3–5 карточек по правилу; matching — соединить 3–4 пары; short_answer — короткий свободный ответ; fill_blank — вставить недостающее слово/значение в предложение; numeric — вычислить число с единицами; categorize — распределить 3–5 понятий по категориям, pairs содержит {left: понятие, right: категория}; diagnose_error — найти и объяснить конкретную ошибку в решении; predict — предсказать результат опыта/изменения условия; scenario_choice — принять решение в практической ситуации, 4 варианта; evidence_choice — выбрать вывод, подтверждённый данными/фактами, 4 варианта; table_read — ответить на вопрос по маленькой таблице, представленной прямо в тексте, 4 варианта; explain — объяснить причинно-следственную связь в 1–2 предложениях.\nПоследние форматы: ${recentTypes.join(', ') || 'нет'}.\nСложность следующего задания: ${difficulty} из 5. Уровни: 1 — простой шаг с опорой, 2 — применение правила, 3 — перенос или два шага, 4 — анализ условий/исключений/данных, 5 — самостоятельное обоснование и многошаговый перенос. Первый вопрос тоже должен быть минимум диагностического уровня 3. Не делай задачу тривиальной, не спрашивай просто определение, не используй нелепые отвлекающие варианты и повторение теории своими словами. Требуй рассуждения по предмету, а не длинного ответа. Для выбора каждый вариант должен быть правдоподобен и отражать конкретное заблуждение. После правильного ответа усложни ход мысли или контекст; после ошибки сохрани тот же учебный навык, добавь опору.\nПроверенные ответы до этого хода: ${priorOutcomes.length}.\nПредыдущая задача: ${String(previousTaskEntry?.task || 'начало практики').slice(0, 600)}\nОтвет ученика: ${answer === null ? 'ещё не отвечал' : String(answer).slice(0, 1000)}\nНезависимый результат проверки этого ответа: ${grading ? JSON.stringify({ correct: grading.correct, assessment: grading.assessment, expected: grading.expected }) : 'ответ не проверялся, это первый ход'}. Не меняй этот вердикт, если ответ проверялся; сформулируй своё собственное следующее задание на основании слабого места или продемонстрированного навыка.\nКонтекст недавних ходов: ${JSON.stringify(context)}\n\nТеория подготовлена заранее. theory, theoryBlocks, theoryVisualPrompt, theoryVisualCaption верни пустыми. Если ответ уже проверен, feedback можешь оставить пустым: сервер сам построит его из оценки. На первом ходе correct=null. Создай ровно одно новое задание в содержательном контексте, с однозначным условием, проверяемым ключом и заполни answerKey.expected точно в соответствии с задачей и options/items/pairs; для свободного ответа добавь accepted либо проверяемый rubric. Заполни соответствующие массивы. Не повторяй недавний сюжет и числа. Не завершай урок самостоятельно.`;
   return geminiJson([
     { role: 'system', content: lang === 'kk' ? SYSTEM_KK : SYSTEM_RU },
     { role: 'user', content: prompt },
@@ -1104,7 +1221,7 @@ app.post('/api/ai/turn', authStudent, async (req, res) => {
     const latest = teacherEntries[teacherEntries.length - 1];
     const first = teacherEntries[0];
     return res.json({
-      ...latest,
+      ...((({ answerKey, ...publicTurn }) => publicTurn)(latest)),
       taskType: latest.taskType || (latest.taskKind === 'choice' ? 'choice' : 'short'),
       theory: first.theory || '', theoryBlocks: first.theoryBlocks || [],
       theoryVisualPrompt: first.theoryVisualPrompt || '', theoryVisualCaption: first.theoryVisualCaption || '',
@@ -1112,16 +1229,32 @@ app.post('/api/ai/turn', authStudent, async (req, res) => {
       mastered: false, resumed: true,
     });
   }
+  let grading = null;
+  if (hasAnswer) {
+    const activeTask = [...teacherEntries].reverse().find(entry => entry.task);
+    if (!activeTask) return res.status(409).json({ error: 'no_active_task' });
+    grading = gradeDeterministically(activeTask, answer);
+    if (!grading) {
+      try { grading = await gradeOpenAnswer(activeTask, answerText, lang); }
+      catch (error) {
+        console.error('Answer grading failed:', error.message);
+        return res.status(502).json({ error: 'grading_unavailable' });
+      }
+    }
+    grading.feedback = formatGradingFeedback(grading, activeTask, lang);
+  }
   if (hasAnswer) history.push({ role: 'student', text: answerText });
 
   try {
+    const nextDifficulty = hasAnswer ? targetDifficulty(teacherEntries, grading.correct) : targetDifficulty(teacherEntries, null);
     const generated = await adaptiveTurn({
-      topic, lang, history, answer: answerText,
-      difficulty: targetDifficulty(teacherEntries, null), firstTurn, teacherExamples,
+      topic, lang, history, answer: answerText, grading,
+      difficulty: nextDifficulty, firstTurn, teacherExamples,
     });
     const ai = normalizeLessonTurn(generated, false);
-    ai.correct = hasAnswer ? ai.correct === true : null;
-    ai.difficulty = targetDifficulty(teacherEntries, ai.correct);
+    ai.correct = hasAnswer ? grading.correct : null;
+    if (hasAnswer) ai.feedback = grading.feedback;
+    ai.difficulty = nextDifficulty;
     if (firstTurn && !ai.theoryVisualPrompt) {
       ai.theoryVisualPrompt = `A clear, calm school textbook illustration explaining the idea of ${topic.title}: ${ai.theory.slice(0, 260)}. No labels, no lettering, no answer.`;
     }
@@ -1137,7 +1270,9 @@ app.post('/api/ai/turn', authStudent, async (req, res) => {
       ai.task = '';
       ai.feedback = `${ai.feedback} ${DONE_MSG[lang]}`.trim();
     }
-    history.push({ role: 'teacher', text: JSON.stringify(ai) });
+    const privateAnswerKey = ai.answerKey;
+    delete ai.answerKey;
+    history.push({ role: 'teacher', text: JSON.stringify({ ...ai, answerKey: privateAnswerKey }) });
     await saveProgress(prog, history, topicId, studentKey, studentId);
     if (hasAnswer && progress.mastered) {
       await pool.query('UPDATE progress SET completed=true WHERE id=$1', [prog.id]);
