@@ -7,6 +7,9 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#0b0c0e">
 <link rel="stylesheet" href="/css/style.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
 <script>try{document.documentElement.dataset.theme=localStorage.getItem('tasked_theme')==='light'?'light':'dark'}catch(e){document.documentElement.dataset.theme='dark'}</script>
 </head>
 <body>
@@ -86,6 +89,7 @@
 </button>
 <div id="voiceStatus"></div>
 <div id="caption"></div>
+<div id="xpToast"></div>
 
 <div class="modal-bg" id="voiceModal">
   <div class="modal">
@@ -147,6 +151,31 @@ function renderChips() {
   if (!chips.length) return;
   $('chips').innerHTML = chips.map(c =>
     `<span class="chip-a ${c.ok ? 'good' : 'bad'}">${c.ok ? tr('good') : tr('miss')} · ${c.n}</span>`).join('');
+}
+function showXp(n) {
+  const el = $('xpToast');
+  if (!el) return;
+  el.textContent = '+' + n + ' XP';
+  el.classList.remove('show');
+  void el.offsetWidth;
+  el.classList.add('show');
+}
+function boom() {
+  const box = document.createElement('div');
+  box.className = 'confetti';
+  const colors = ['var(--ink)', 'var(--muted)', 'var(--acc)', 'var(--green)', 'var(--faint)'];
+  for (let i = 0; i < 30; i++) {
+    const s = document.createElement('i');
+    s.style.left = (Math.random() * 100) + 'vw';
+    s.style.background = colors[i % colors.length];
+    s.style.width = (6 + Math.random() * 6) + 'px';
+    s.style.height = (8 + Math.random() * 8) + 'px';
+    s.style.animationDuration = (1.6 + Math.random() * 1.6) + 's';
+    s.style.animationDelay = (Math.random() * 0.5) + 's';
+    box.appendChild(s);
+  }
+  document.body.appendChild(box);
+  setTimeout(() => box.remove(), 4200);
 }
 function paintStreak() {
   // consecutive correct answers at the end (backend finishes the lesson at 5)
@@ -230,13 +259,14 @@ async function nextTurn(answer) {
       $('submitBtn').style.display = 'none';
       $('dictBtn').style.display = 'none';
       $('status').textContent = tr('doneT');
+      showXp(50); boom();
       if (soundOn && data.feedback) Voice.speak(data.feedback);
     }
     if (data.correct === true || data.correct === false) {
       chips.push({ ok: data.correct, n: attemptNum });
       renderChips();
       paintStreak();
-      if (data.correct) tasksDone++;
+      if (data.correct) { tasksDone++; showXp(10); }
       $('levelPill').textContent = tr('lvl') + (tasksDone >= 4 ? tr('lvlHigh') : tasksDone >= 2 ? tr('lvlMid') : tr('lvlStart'));
     }
   } catch (e) {
