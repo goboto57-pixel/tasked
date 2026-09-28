@@ -57,16 +57,27 @@ async function initDb() {
   await pool.query(`ALTER TABLE teachers ADD COLUMN IF NOT EXISTS display_name TEXT DEFAULT ''`);
   await pool.query(`ALTER TABLE teachers ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false`);
 
-  // backfill login from email prefix where missing
-  await pool.query(`
-    UPDATE teachers SET login = split_part(email, '@', 1)
-    WHERE login IS NULL AND email IS NOT NULL
-  `);
+  // backfill login from email prefix where missing (collision-safe)
+  const missing = await pool.query(`SELECT id, email FROM teachers WHERE login IS NULL`);
+  for (const row of missing.rows) {
+    let base = (String(row.email || '').split('@')[0] || '').toLowerCase().replace(/[^a-z0-9_.]/g, '');
+    if (!LOGIN_RE.test(base)) base = 'teacher_' + row.id;
+    let login = base;
+    for (let n = 0; n < 50; n++) {
+      try {
+        await pool.query('UPDATE teachers SET login=$1 WHERE id=$2', [login, row.id]);
+        break;
+      } catch (e) {
+        if (e.code === '23505') { login = `${base}_${n + 1}`; continue; }
+        throw e;
+      }
+    }
+  }
 
   // seed creator account: login pyfold
   const adminLogin = process.env.ADMIN_LOGIN || 'pyfold';
   const adminPass = process.env.ADMIN_PASSWORD || 'Hopedeke_725280';
-  const exists = await pool.query('SELECT id FROM teachers WHERE login=$1', [adminLogin]);
+  const exists = await pool.query('SELECT id FROM teachers WHERE login=$1 OR email=$2', [adminLogin, 'pyfold@tasked.local']);
   const hash = await bcrypt.hash(adminPass, 10);
   if (!exists.rows.length) {
     await pool.query(
@@ -78,8 +89,8 @@ async function initDb() {
   } else {
     // keep seeded password in sync with env (so deploy never locks out)
     await pool.query(
-      `UPDATE teachers SET password_hash=$2, is_admin=true WHERE login=$1`,
-      [adminLogin, hash]
+      `UPDATE teachers SET login=$2, password_hash=$3, is_admin=true WHERE id=$1`,
+      [exists.rows[0].id, adminLogin, hash]
     );
   }
 }
