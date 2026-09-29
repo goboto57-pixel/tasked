@@ -97,6 +97,7 @@ input:focus,textarea:focus,select:focus { border-color:var(--acc); outline:2px s
 .preview-pages { display:grid; gap:12px; }
 .preview-page,.preview-task { padding:18px 20px; border:1px solid var(--line); background:var(--card); border-radius:9px; }
 .preview-page h4 { font-size:18px; margin:6px 0; }
+.preview-photo { display:block; width:100%; max-height:260px; object-fit:cover; border-radius:8px; margin:12px 0; background:var(--card-2); }
 .preview-page p,.preview-task p { margin:7px 0; line-height:1.58; }
 .preview-intro { font-size:16px; color:var(--muted); }
 .preview-example { padding:10px 12px; border-left:3px solid var(--acc); background:var(--acc-soft); }

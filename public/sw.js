@@ -1,5 +1,5 @@
 // tasked service worker: offline shell and static assets
-const CACHE = 'tasked-v11';
+const CACHE = 'tasked-v12';
 const CORE = [
   '/', '/offline.html', '/lesson.html', '/student.html', '/teacher.html',
   '/css/style.css', '/css/corporate.css',

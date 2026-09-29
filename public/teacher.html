@@ -78,7 +78,8 @@
 
         <div class="card" style="cursor:default; margin-bottom:18px">
           <h3 style="font-size:15px;display:flex;gap:8px;align-items:center"><i data-icon="plus"></i><span data-i18n="newTopicT">Новая тема</span></h3>
-          <p class="muted" data-i18n="newTopicP">Сначала создаётся черновик. Mistral подготовит общую теорию и первое задание; после просмотра ты опубликуешь урок.</p>
+          <p class="muted" data-i18n="newTopicP">Сначала создаётся черновик. ИИ подготовит общую теорию, фотографии и первое задание; после просмотра вы опубликуете урок.</p>
+          <p class="muted" id="aiProviderStatus" role="status"></p>
           <div class="create-grid" style="display:grid; grid-template-columns:1fr 2fr; gap:12px; margin-top:6px">
             <div>
               <label style="margin-top:8px" data-i18n="fTopicName">Название темы</label>
@@ -196,6 +197,7 @@
       <p id="previewMessage" class="muted" role="status"></p>
     </div>
     <div class="preview-actions">
+      <button class="btn" id="previewRetryImages" onclick="retryPreviewImages()" hidden data-i18n="previewRetryImages">Повторить фото</button>
       <button class="btn" id="previewRegenerate" onclick="regeneratePreview()" data-i18n="previewRegenerate">Сгенерировать заново</button>
       <button class="btn primary" id="previewPublish" onclick="publishPreview()" disabled>Опубликовать урок</button>
     </div>
@@ -301,9 +303,22 @@ function showTab(name, el) {
 let myTopics = [];
 async function loadMine() {
   myTopics = await (await fetch('/api/teacher/topics')).json();
+  loadAiProviderStatus();
   renderTable(myTopics);
   document.getElementById('stTopics').textContent = myTopics.length;
   if (document.getElementById('bankTopic')) loadBankTopics();
+}
+async function loadAiProviderStatus() {
+  const target = document.getElementById('aiProviderStatus');
+  try {
+    const response = await fetch('/api/ai/provider');
+    const data = await response.json();
+    target.textContent = data.textProvider === 'openai'
+      ? previewText('Активно: GPT-5.4 Mini · GPT Image 2, качество low.', 'Белсенді: GPT-5.4 Mini · GPT Image 2, low сапасы.')
+      : data.textProvider === 'mistral_fallback'
+        ? previewText('Временно работает Mistral. Для GPT и фотографий добавьте OPENAI_API_KEY.', 'Уақытша Mistral жұмыс істейді. GPT пен фотолар үшін OPENAI_API_KEY қосыңыз.')
+        : previewText('ИИ не настроен: добавьте OPENAI_API_KEY.', 'ЖИ бапталмаған: OPENAI_API_KEY қосыңыз.');
+  } catch (error) { target.textContent = ''; }
 }
 function renderTable(list) {
   const tb = document.querySelector('#topicsTable tbody');
@@ -339,7 +354,7 @@ async function createTopic() {
   const desc = (cat ? '[' + cat + '] ' : '') + document.getElementById('newDesc').value.trim();
   const response = await fetch('/api/topics', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, description: desc }) });
   const created = await response.json();
-  if (!response.ok) { alert(created.error || 'Не удалось создать тему'); return; }
+  if (!response.ok) { alert(created.error === 'openai_not_configured' ? tr('openaiSetupNeeded') : (created.error || 'Не удалось создать тему')); return; }
   document.getElementById('newTitle').value = '';
   document.getElementById('newDesc').value = '';
   await loadMine();
@@ -583,7 +598,7 @@ async function loadClasses() {
   paintIcons(box);
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
-let previewId = null, previewPoll = null, previewRun = 0;
+let previewId = null, previewPoll = null, previewRun = 0, previewFingerprint = '';
 function previewText(ru, kk) { return window.i18n?.get?.() === 'kk' ? kk : ru; }
 function closePreview() {
   previewRun++;
@@ -591,10 +606,12 @@ function closePreview() {
   document.getElementById('previewModal').classList.remove('open');
   document.getElementById('previewModal').style.display = 'none';
   previewId = null;
+  previewFingerprint = '';
   loadMine();
 }
 function openPreview(id) {
   previewId = id;
+  previewFingerprint = '';
   const topic = myTopics.find(t => t.id === id);
   document.getElementById('previewTitle').textContent = topic?.title || 'Урок';
   document.getElementById('previewTheory').replaceChildren();
@@ -614,6 +631,10 @@ function previewParagraph(parent, text, className) {
 function renderPreview(data) {
   const pages = document.getElementById('previewTheory');
   const theory = data.theory?.[window.i18n?.get?.() || 'ru'] || data.theory?.ru;
+  const task = data.firstTask?.[window.i18n?.get?.() || 'ru'] || data.firstTask?.ru;
+  const fingerprint = JSON.stringify([data.theoryStatus, data.taskStatus, data.imagesStatus, data.imagePages, window.i18n?.get?.()]);
+  if (fingerprint !== previewFingerprint) {
+  previewFingerprint = fingerprint;
   pages.replaceChildren();
   if (theory?.pages?.length) {
     previewParagraph(pages, theory.intro, 'preview-intro');
@@ -621,13 +642,20 @@ function renderPreview(data) {
       const card = document.createElement('article'); card.className = 'preview-page';
       previewParagraph(card, `${previewText('ТЕОРИЯ', 'ТЕОРИЯ')} ${String(i + 1).padStart(2, '0')}`, 'preview-kicker');
       const heading = document.createElement('h4'); heading.textContent = page.title || ''; card.appendChild(heading);
+      if (data.imagePages?.includes(i)) {
+        const image = document.createElement('img');
+        image.className = 'preview-photo';
+        image.src = `/api/topics/${data.id}/theory-image/${i}`;
+        image.alt = page.title || '';
+        image.onerror = () => image.remove();
+        card.appendChild(image);
+      }
       previewParagraph(card, page.text);
       if (page.example) previewParagraph(card, `${previewText('Пример', 'Мысал')}: ${page.example}`, 'preview-example');
       if (page.key) previewParagraph(card, page.key, 'preview-key');
       pages.appendChild(card);
     });
   }
-  const task = data.firstTask?.[window.i18n?.get?.() || 'ru'] || data.firstTask?.ru;
   const taskEl = document.getElementById('previewTask'); taskEl.replaceChildren();
   taskEl.hidden = !task;
   if (task) {
@@ -639,15 +667,21 @@ function renderPreview(data) {
     const answer = task.answerKey?.expected;
     if (answer != null) previewParagraph(taskEl, `${previewText('Ключ', 'Дұрыс жауап')}: ${typeof answer === 'object' ? JSON.stringify(answer) : answer}`, 'preview-answer');
   }
+  }
   const ready = Boolean(theory?.pages?.length && task?.task && data.theoryStatus === 'ready' && data.taskStatus === 'ready');
-  document.getElementById('previewPublish').disabled = !ready || data.published;
+  const imagesFinished = data.imagesStatus === 'ready' || data.imagesStatus === 'failed';
+  const canPublish = ready && imagesFinished;
+  document.getElementById('previewPublish').disabled = !canPublish || data.published;
   document.getElementById('previewPublish').textContent = data.published ? previewText('Опубликовано', 'Жарияланды') : previewText('Опубликовать урок', 'Сабақты жариялау');
   const failed = data.theoryStatus === 'failed' || data.taskStatus === 'failed';
-  document.getElementById('previewRegenerate').disabled = !ready && !failed;
+  document.getElementById('previewRegenerate').disabled = !canPublish && !failed;
+  document.getElementById('previewRetryImages').hidden = data.imagesStatus !== 'failed' || !ready;
   document.getElementById('previewState').textContent = failed ? previewText('Подготовка прервалась. Запустите её снова.', 'Дайындау тоқтады. Қайта бастаңыз.')
-    : ready ? previewText('Теория и первое задание готовы. Проверьте материал и опубликуйте урок.', 'Теория мен алғашқы тапсырма дайын. Материалды тексеріп, сабақты жариялаңыз.')
-      : previewText(`Mistral готовит материал: теория — ${data.theoryStatus}, задание — ${data.taskStatus}.`, `Mistral материал дайындауда: теория — ${data.theoryStatus}, тапсырма — ${data.taskStatus}.`);
-  return ready || failed;
+    : canPublish && data.imagesStatus === 'failed' ? previewText('Теория и задание готовы. Фото не удалось создать; ученики увидят схемы.', 'Теория мен тапсырма дайын. Фото жасалмады; оқушылар сызбаларды көреді.')
+    : canPublish ? previewText('Теория, задание и фото готовы. Проверьте материал и опубликуйте урок.', 'Теория, тапсырма және фотолар дайын. Материалды тексеріп, сабақты жариялаңыз.')
+    : ready ? previewText(`Фото для теории: ${data.imagePages?.length || 0} из 3.`, `Теория фотолары: ${data.imagePages?.length || 0}/3.`)
+      : previewText(`ИИ готовит материал: теория — ${data.theoryStatus}, задание — ${data.taskStatus}.`, `ЖИ материал дайындауда: теория — ${data.theoryStatus}, тапсырма — ${data.taskStatus}.`);
+  return canPublish || failed;
 }
 async function pollPreview(run) {
   if (run !== previewRun || !previewId) return;
@@ -666,10 +700,18 @@ async function regeneratePreview() {
   const response = await fetch(`/api/teacher/topics/${previewId}/regenerate`, { method: 'POST' });
   if (!response.ok) { document.getElementById('previewMessage').textContent = 'Не удалось перезапустить генерацию.'; return; }
   document.getElementById('previewTheory').replaceChildren();
+  previewFingerprint = '';
   document.getElementById('previewTask').hidden = true;
   document.getElementById('previewPublish').disabled = true;
   clearTimeout(previewPoll);
   previewRun++; pollPreview(previewRun);
+}
+async function retryPreviewImages() {
+  if (!previewId) return;
+  const response = await fetch(`/api/teacher/topics/${previewId}/regenerate-images`, { method: 'POST' });
+  if (!response.ok) { document.getElementById('previewMessage').textContent = previewText('Не удалось повторить генерацию фото.', 'Фотоны қайта жасау мүмкін болмады.'); return; }
+  document.getElementById('previewMessage').textContent = previewText('Фотографии готовятся заново…', 'Фотолар қайта дайындалуда…');
+  clearTimeout(previewPoll); previewFingerprint = ''; previewRun++; pollPreview(previewRun);
 }
 async function publishPreview() {
   if (!previewId) return;
@@ -683,6 +725,7 @@ async function publishPreview() {
 window.onLangChange = () => {
   if (!me) return;
   renderTable(myTopics); loadProgress();
+  loadAiProviderStatus();
   if (me.role === 'admin') loadAdmin();
   if (document.getElementById('tabBank').style.display !== 'none') loadBank();
   if (document.getElementById('tabClasses').style.display !== 'none') loadClasses();

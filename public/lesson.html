@@ -267,7 +267,7 @@ function renderTheoryWindow() {
   if (page.example) { const example = document.createElement('p'); example.className = 'theory-example'; example.textContent = page.example; content.appendChild(example); }
   if (page.key) { const key = document.createElement('p'); key.className = 'theory-key'; key.textContent = page.key; content.appendChild(key); }
   section.append(number, content); $('theoryBlocks').appendChild(section);
-  showFreeVisual('theory', page.visualSpec, page.title);
+  showTheoryVisual(page, theoryPageIndex);
   const total = theoryPages.length;
   $('theoryWindowN').textContent = `${theoryPageIndex + 1}/${total}`;
   $('theoryPageLabel').textContent = curLang() === 'kk' ? `Терезе ${theoryPageIndex + 1}/${total}` : `Окно ${theoryPageIndex + 1} из ${total}`;
@@ -314,6 +314,27 @@ function showFreeVisual(kind, spec, caption) {
   img.hidden = false; wrap.hidden = false; wrap.classList.remove('loading');
   $(kind + 'VisualLoading').hidden = true;
   $(kind + 'VisualCaption').textContent = caption || '';
+}
+let theoryVisualRun = 0;
+let theoryPhotoUrl = null;
+async function showTheoryVisual(page, index) {
+  const run = ++theoryVisualRun;
+  if (theoryPhotoUrl) { URL.revokeObjectURL(theoryPhotoUrl); theoryPhotoUrl = null; }
+  showFreeVisual('theory', page.visualSpec, page.title);
+  try {
+    const response = await fetch(`/api/topics/${encodeURIComponent(topicId)}/theory-image/${index}`, { cache: 'no-store' });
+    if (!response.ok) return;
+    const blob = await response.blob();
+    if (run !== theoryVisualRun || !blob.type.startsWith('image/')) return;
+    const url = URL.createObjectURL(blob);
+    theoryPhotoUrl = url;
+    const img = $('theoryVisualImg');
+    img.src = url;
+    img.alt = page.title || (curLang() === 'kk' ? 'Сабақ суреті' : 'Иллюстрация к уроку');
+    img.hidden = false;
+    $('theoryVisual').hidden = false;
+    $('theoryVisualCaption').textContent = page.title || '';
+  } catch (error) { /* Keep the local diagram when the photo is unavailable. */ }
 }
 function moveTheory(direction) {
   const target = theoryPageIndex + direction;
@@ -388,7 +409,7 @@ async function loadPreparedTheory() {
         return false;
       }
       if (!response.ok && response.status !== 202) {
-        $('theoryBody').textContent = result.error === 'ai_error' || result.status === 'failed' ? tr('theoryGenerateFailed') : tr('theoryUnavailable');
+        $('theoryBody').textContent = result.error === 'openai_not_configured' ? tr('openaiSetupNeeded') : result.error === 'ai_error' || result.status === 'failed' ? tr('theoryGenerateFailed') : tr('theoryUnavailable');
         $('theoryErrorActions').hidden = false;
         $('theoryRetryBtn').hidden = false;
         theoryLoadBusy = false;
@@ -448,7 +469,7 @@ async function nextTurn(answer) {
     }
     if (r.status === 202) { $('status').textContent = tr('firstTaskUnavailable'); return; }
     if (!r.ok || data.error) {
-      const map = { topic_not_found: tr('errTopic'), bad_request: tr('errTopic'), ai_error: tr('errAi'), grading_unavailable: tr('gradingUnavailable'), first_task_unavailable: tr('firstTaskUnavailable'), unauthorized: tr('authRequired') };
+      const map = { topic_not_found: tr('errTopic'), bad_request: tr('errTopic'), ai_error: tr('errAi'), openai_not_configured: tr('openaiSetupNeeded'), grading_unavailable: tr('gradingUnavailable'), first_task_unavailable: tr('firstTaskUnavailable'), unauthorized: tr('authRequired') };
       $('status').textContent = map[data.error] || tr('errAi');
       return;
     }
@@ -732,7 +753,7 @@ async function sendChat(forced) {
     });
     const data = await r.json();
     if (!r.ok || data.error || !data.reply) {
-      thinking.textContent = data.error === 'ai_error' ? tr('errAi') : data.error === 'topic_not_found' ? tr('errTopic') : tr('noConn');
+      thinking.textContent = data.error === 'openai_not_configured' ? tr('openaiSetupNeeded') : data.error === 'ai_error' ? tr('errAi') : data.error === 'topic_not_found' ? tr('errTopic') : tr('noConn');
       chatHistory.splice(historyIndex, 1);
     } else {
       thinking.textContent = data.reply;

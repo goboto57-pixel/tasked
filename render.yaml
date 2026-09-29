@@ -8,12 +8,14 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false        # строка подключения к бесплатной Postgres (Neon)
-      - key: MISTRAL_API_KEY
+      - key: OPENAI_API_KEY
         sync: false
-      - key: MISTRAL_MODEL
-        value: ministral-14b-latest
-      - key: MISTRAL_FALLBACK_MODEL
-        value: ministral-14b-latest
+      - key: OPENAI_TEXT_MODEL
+        value: gpt-5.4-mini
+      - key: OPENAI_IMAGE_MODEL
+        value: gpt-image-2
+      - key: MISTRAL_API_KEY
+        sync: false        # optional fallback when OPENAI_API_KEY is absent
       - key: FIREBASE_API_KEY
         sync: false
       - key: FIREBASE_AUTH_DOMAIN
