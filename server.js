@@ -775,60 +775,56 @@ app.get('/api/student/export.csv', authStudent, async (req, res) => {
     r.rows.map(x => [x.title, x.score, x.attempts, x.completed ? 'да' : 'нет', x.updated_at]));
 });
 
-// ---------- Gemini AI (bilingual RU/KK) ----------
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+// ---------- Mistral AI (bilingual RU/KK) ----------
+// Primary: Magistral Medium (frontier reasoning, most capable outside the
+// Large/Medium/Small families). Falls back to Magistral Small, then to the
+// proven ministral-14b if Magistral hits quota (paid tier) limits.
+const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'magistral-medium-latest';
 
-async function geminiChat(messages, maxTokens = 900, json = false) {
-  if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is not configured');
+async function mistralChat(messages, maxTokens = 900, json = false) {
+  if (!process.env.MISTRAL_API_KEY) throw new Error('MISTRAL_API_KEY is not configured');
   const systemInstruction = messages.find(m => m.role === 'system')?.content || '';
-  const contents = messages.filter(m => m.role !== 'system').map(m => ({
-    role: m.role === 'assistant' || m.role === 'model' ? 'model' : 'user',
-    parts: [{ text: String(m.content || '') }],
+  const msgs = messages.filter(m => m.role !== 'system').map(m => ({
+    role: m.role === 'assistant' ? 'assistant' : 'user',
+    content: String(m.content || ''),
   }));
-  // NOTE: no thinkingConfig for 3.x flash (its thinking tier 503s often).
-  // 2.5-flash thinks inside maxOutputTokens by default and truncates answers,
-  // so thinking is disabled explicitly for it.
-  const thinkingFor = (model) => model.includes('2.5-flash') ? { thinkingBudget: 0 } : undefined;
-  const configFor = (model) => {
-    const cfg = {
-      temperature: json ? 0.25 : 0.45,
-      maxOutputTokens: maxTokens,
-      ...(json ? { responseMimeType: 'application/json' } : {}),
-    };
-    const thinking = thinkingFor(model);
-    if (thinking) cfg.thinkingConfig = thinking;
-    return cfg;
+  const config = {
+    model: MISTRAL_MODEL,
+    messages: [
+      ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
+      ...msgs
+    ],
+    temperature: json ? 0.2 : 0.4,
+    max_tokens: maxTokens,
   };
-  const bodyFor = (model) => ({
-    systemInstruction: { parts: [{ text: systemInstruction }] },
-    contents,
-    generationConfig: configFor(model),
-  });
-  // Free tier gives each model its own tiny daily quota, so fail over across
-  // models instead of hammering one. 429 (quota) moves on immediately —
-  // retrying the same model is pointless until reset.
+  if (json) config.response_format = { type: 'json_object' };
+  
+  // Fallback chain for Mistral models
   const fallbackChain = [
-    process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash',
-    'gemini-2.5-flash', 'gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-2.5-flash-lite',
+    process.env.MISTRAL_FALLBACK_MODEL || 'magistral-small-latest',
+    'magistral-small-latest', 'ministral-14b-latest',
   ];
-  const models = [GEMINI_MODEL, ...fallbackChain].filter((m, i, a) => m && a.indexOf(m) === i);
+  const models = [MISTRAL_MODEL, ...fallbackChain].filter((m, i, a) => m && a.indexOf(m) === i);
   let lastErr;
   for (const model of models) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 45000);
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
-        body: JSON.stringify(bodyFor(model)),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`,
+        },
+        body: JSON.stringify({ ...config, model }),
         signal: ctrl.signal,
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const detail = payload.error?.message || `Gemini API ${response.status}`;
+        const detail = payload.error?.message || `Mistral API ${response.status}`;
         lastErr = new Error(detail.slice(0, 240));
-        // 503 (overload): brief pause, then try the next model in the chain.
-        // 429 (quota): never refills in time, move on immediately.
+        // 429 (quota): move on immediately
+        // 503 (overload): brief pause, then try next model
         if (response.status === 503) {
           await new Promise(r => setTimeout(r, 3000));
           continue;
@@ -836,21 +832,21 @@ async function geminiChat(messages, maxTokens = 900, json = false) {
         if (response.status === 429) continue;
         throw lastErr;
       }
-      const text = payload.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('').trim();
-      if (!text) { lastErr = new Error('Gemini returned an empty response'); continue; }
+      const text = payload.choices?.[0]?.message?.content?.trim();
+      if (!text) { lastErr = new Error('Mistral returned an empty response'); continue; }
       return text;
     } catch (e) {
-      if (e.name === 'AbortError') { lastErr = new Error('Gemini timeout'); }
+      if (e.name === 'AbortError') { lastErr = new Error('Mistral timeout'); }
       else lastErr = e;
     } finally { clearTimeout(timer); }
   }
   throw lastErr;
 }
 
-async function geminiJson(messages, maxTokens = 900) {
-  const content = await geminiChat(messages, maxTokens, true);
+async function mistralJson(messages, maxTokens = 900) {
+  const content = await mistralChat(messages, maxTokens, true);
   const start = content.indexOf('{'), end = content.lastIndexOf('}');
-  if (start < 0 || end <= start) throw new Error('Gemini returned invalid JSON');
+  if (start < 0 || end <= start) throw new Error('Mistral returned invalid JSON');
   return JSON.parse(content.slice(start, end + 1));
 }
 
@@ -864,7 +860,7 @@ function generateAndCacheTopicTheory(topic) {
 async function generateTopicTheoryJob(topic) {
   await pool.query("UPDATE topics SET theory_status='generating' WHERE id=$1", [topic.id]);
   try {
-    const theory = await geminiJson([
+    const theory = await mistralJson([
       { role: 'system', content: 'Ты — автор содержательных школьных мини-уроков, а не генератор конспектов. Верни JSON на русском и казахском языках. В каждом языке: intro и ровно 3 последовательные pages. Строй обучение так: 1) что это за явление/идея и зачем она нужна; 2) как рассуждать или применять её — подробно разобранный пример по шагам; 3) перенос в новый контекст, границы применения и типичная ошибка с её исправлением. На каждой странице: title, text до 750 знаков с точными понятиями и связью причин/следствий, example с реальным разбором или применением, key как короткий вывод, и visualSpec {kind: sequence|cycle|compare|bars|concept, title, items:[{label,value}]} на 2–5 пунктов. Не подменяй объяснение лозунгами и определениями в одну строку. Используй конкретику именно этой темы; для формальных тем проверь обозначения и расчёт, для ИИ различай методы, данные, обучение и вывод. Не выдумывай факты. Материал учителя учитывай в первую очередь. Схемы строятся локально из visualSpec, внешние изображения не запрашивай. JSON: {"ru":{"intro":"","pages":[{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"concept","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"sequence","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"compare","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}}]},"kk":{"intro":"","pages":[{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"concept","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"sequence","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"compare","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}}]}}' },
       { role: 'user', content: `Тема: ${topic.title}\nОписание: ${topic.description || ''}\nМатериал учителя: ${topic.theory_override || 'не указан'}` },
     ], 2500);
@@ -1126,7 +1122,7 @@ function gradeDeterministically(task, submitted) {
 async function gradeOpenAnswer(task, submitted, lang) {
   const key = task.answerKey || {};
   const expected = key.expected ?? 'Сравни ответ с условием задания и оцени по критериям.';
-  const result = await geminiJson([
+  const result = await mistralJson([
     { role: 'system', content: lang === 'kk'
       ? 'Сен оқушы жауабын әділ бағалайтын пән мұғалімісің. Бағалау өлшемін қолдан. Мағынасы дұрыс баламаларды қабылда, тек сөзбе-сөз сәйкес келмеуі үшін қатені белгілеме. Тек JSON қайтар: {"correct":true|false,"assessment":"Оқушы жауабындағы нақты дұрыс не жетіспейтін ой, бағалау сөздерінсіз","expected":"Қысқа дұрыс жауап"}. assessment ішінде «дұрыс/қате» деп үкім шығарма. Толық емес жауап — false.'
       : 'Ты проверяешь ответ как справедливый учитель-предметник. Следуй критериям проверки. Принимай правильные ответы, сформулированные другими словами; не считай ошибкой только за несовпадение формулировки. Верни только JSON: {"correct":true|false,"assessment":"конкретно какой смысловой элемент ответа совпал или отсутствует, без словесного вердикта","expected":"краткий правильный ответ"}. В assessment не пиши «верно/неверно». Неполный ответ оцени false.' },
@@ -1174,7 +1170,7 @@ async function adaptiveTurn({ topic, lang, history, answer, grading = null, diff
     options: Array.isArray(item.options) ? item.options.slice(0, 6).map(x => String(x).slice(0, 100)) : [],
   }));
   const prompt = `Тема: ${String(topic.title || '').slice(0, 300)}\nОписание учителя: ${String(topic.description || '').slice(0, 1000)}\nМатериал учителя для точности: ${teacherReference || 'не задан'}\nПримеры заданий учителя для понимания охвата темы (не копируй дословно; сам придумай новое): ${JSON.stringify(examples)}\nСейчас обязательно выбери формат ${preferredType} (если объективно невозможно — выбери ближайший другой формат из списка, но избегай последних: ${recentTypes.join(', ')}).\nДоступные форматы: choice — выбрать один ответ; true_false — оценить утверждение; multiple_select — отметить все подходящие варианты (минимум 2 правильных); ordering — расположить 3–5 карточек по правилу; matching — соединить 3–4 пары; short_answer — короткий свободный ответ; fill_blank — вставить недостающее слово/значение в предложение; numeric — вычислить число с единицами; categorize — распределить 3–5 понятий по категориям, pairs содержит {left: понятие, right: категория}; diagnose_error — найти и объяснить конкретную ошибку в решении; predict — предсказать результат опыта/изменения условия; scenario_choice — принять решение в практической ситуации, 4 варианта; evidence_choice — выбрать вывод, подтверждённый данными/фактами, 4 варианта; table_read — ответить на вопрос по маленькой таблице, представленной прямо в тексте, 4 варианта; explain — объяснить причинно-следственную связь в 1–2 предложениях.\nПоследние форматы: ${recentTypes.join(', ') || 'нет'}.\nСложность следующего задания: ${difficulty} из 5. Уровни: 1 — простой шаг с опорой, 2 — применение правила, 3 — перенос или два шага, 4 — анализ условий/исключений/данных, 5 — самостоятельное обоснование и многошаговый перенос. Первый вопрос тоже должен быть минимум диагностического уровня 3. Не делай задачу тривиальной, не спрашивай просто определение, не используй нелепые отвлекающие варианты и повторение теории своими словами. Требуй рассуждения по предмету, а не длинного ответа. Для выбора каждый вариант должен быть правдоподобен и отражать конкретное заблуждение. После правильного ответа усложни ход мысли или контекст; после ошибки сохрани тот же учебный навык, добавь опору.\nПроверенные ответы до этого хода: ${priorOutcomes.length}.\nПредыдущая задача: ${String(previousTaskEntry?.task || 'начало практики').slice(0, 600)}\nОтвет ученика: ${answer === null ? 'ещё не отвечал' : String(answer).slice(0, 1000)}\nНезависимый результат проверки этого ответа: ${grading ? JSON.stringify({ correct: grading.correct, assessment: grading.assessment, expected: grading.expected }) : 'ответ не проверялся, это первый ход'}. Не меняй этот вердикт, если ответ проверялся; сформулируй своё собственное следующее задание на основании слабого места или продемонстрированного навыка.\nКонтекст недавних ходов: ${JSON.stringify(context)}\n\nТеория подготовлена заранее. theory, theoryBlocks, theoryVisualPrompt, theoryVisualCaption верни пустыми. Если ответ уже проверен, feedback можешь оставить пустым: сервер сам построит его из оценки. На первом ходе correct=null. Создай ровно одно новое задание в содержательном контексте, с однозначным условием, проверяемым ключом и заполни answerKey.expected точно в соответствии с задачей и options/items/pairs; для свободного ответа добавь accepted либо проверяемый rubric. Заполни соответствующие массивы. Не повторяй недавний сюжет и числа. Не завершай урок самостоятельно.`;
-  return geminiJson([
+  return mistralJson([
     { role: 'system', content: lang === 'kk' ? SYSTEM_KK : SYSTEM_RU },
     { role: 'user', content: prompt },
   ], 1100);
@@ -1320,7 +1316,7 @@ app.post('/api/ai/voice', authStudent, async (req, res) => {
     return res.status(400).json({ error: 'message_required' });
   }
   try {
-    const reply = await geminiChat([
+    const reply = await mistralChat([
         { role: 'system', content: `${SYSTEM_VOICE[lang]}\nКонтекст занятия: ${String(topic || 'учёба').slice(0, 200)}.` },
         ...turns,
       ], 500);

@@ -10,10 +10,12 @@ services:
         sync: false        # строка подключения к бесплатной Postgres (Neon)
       - key: GEMINI_API_KEY
         sync: false
-      - key: GEMINI_MODEL
-        value: gemini-3.8-flash
-      - key: GEMINI_FALLBACK_MODEL
-        value: gemini-2.5-flash
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: MISTRAL_MODEL
+        value: magistral-medium-latest
+      - key: MISTRAL_FALLBACK_MODEL
+        value: magistral-small-latest
       - key: GEMINI_IMAGE_MODEL
         value: gemini-3.1-flash-image
       - key: GEMINI_IMAGE_ENABLED
