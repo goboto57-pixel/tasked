@@ -566,6 +566,10 @@ app.get('/api/teacher/topics/:id/preview', authTeacher, async (req, res) => {
   const topic = r.rows[0];
   if (!topic) return res.status(404).json({ error: 'topic_not_found' });
   startTopicPreparation(topic);
+  // Images start only when a teacher actually opens the preview (credit economy).
+  if (topic.theory_cache && topic.images_status === 'pending' && !theoryImageJobs.has(topic.id)) {
+    generateAndCacheTheoryImages(topic).catch(error => console.error('Theory image generation failed:', error.message));
+  }
   const imageRows = await pool.query('SELECT page_index FROM topic_theory_images WHERE topic_id=$1 ORDER BY page_index', [topic.id]);
   res.set('Cache-Control', 'no-store').json({ id: topic.id, title: topic.title, description: topic.description,
     published: topic.published, theoryStatus: topic.theory_status, taskStatus: topic.task_status, imagesStatus: topic.images_status,
@@ -580,6 +584,13 @@ app.post('/api/teacher/topics/:id/publish', authTeacher, async (req, res) => {
   const r = await pool.query(`SELECT theory_status, task_status, images_status, theory_cache, prepared_task FROM topics WHERE ${where}`, params);
   if (!r.rows[0]) return res.status(404).json({ error: 'topic_not_found' });
   if (r.rows[0].theory_status !== 'ready' || r.rows[0].task_status !== 'ready' || !r.rows[0].theory_cache || !r.rows[0].prepared_task) return res.status(409).json({ error: 'preparation_not_ready' });
+  if (r.rows[0].images_status === 'pending') {
+    // Images are teacher-triggered only (credit economy): start them now,
+    // publishing retries once they are ready.
+    const full = (await pool.query(`SELECT * FROM topics WHERE ${where}`, params)).rows[0];
+    if (full) generateAndCacheTheoryImages(full).catch(error => console.error('Theory image generation failed:', error.message));
+    return res.status(409).json({ error: 'preparation_not_ready' });
+  }
   await pool.query(`UPDATE topics SET published=true WHERE ${where}`, params);
   res.json({ published: true });
 });
@@ -635,7 +646,8 @@ app.get('/api/topics/:id/theory', authStudent, async (req, res) => {
     return res.status(202).json({ status: stale ? 'pending' : topic.theory_status });
   }
   if (!topic.theory_cache) return res.status(503).json({ status: topic.theory_status || 'failed' });
-  if (topic.images_status === 'pending') startTopicPreparation(topic);
+  // No image kick here on purpose (credit economy): students always have free
+  // local SVG schemes; images are generated on explicit teacher actions.
   res.set('Cache-Control', 'private, no-store').json({ status: 'ready', theory: topic.theory_cache });
 });
 
@@ -1043,9 +1055,9 @@ function startTopicPreparation(topic) {
   if (!topic.prepared_task && topic.task_status === 'pending') {
     generateAndCacheFirstTask(topic).catch(error => console.error('First task generation failed:', error.message));
   }
-  if (topic.theory_cache && topic.prepared_task && topic.theory_status === 'ready' && topic.task_status === 'ready' && topic.images_status === 'pending') {
-    generateAndCacheTheoryImages(topic).catch(error => console.error('Theory image generation failed:', error.message));
-  }
+  // NOTE: theory images are NOT auto-started here on purpose (credit economy).
+  // They begin only on explicit teacher actions: preview open, publish retry,
+  // or the regenerate-images button. Lessons always have free local SVG schemes.
 }
 function generateAndCacheTheoryImages(topic) {
   if (theoryImageJobs.has(topic.id)) return theoryImageJobs.get(topic.id);
