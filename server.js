@@ -579,7 +579,7 @@ app.post('/api/teacher/topics/:id/publish', authTeacher, async (req, res) => {
   const params = req.user.role === 'admin' ? [req.params.id] : [req.params.id, req.user.id];
   const r = await pool.query(`SELECT theory_status, task_status, images_status, theory_cache, prepared_task FROM topics WHERE ${where}`, params);
   if (!r.rows[0]) return res.status(404).json({ error: 'topic_not_found' });
-  if (r.rows[0].theory_status !== 'ready' || r.rows[0].task_status !== 'ready' || !['ready','failed'].includes(r.rows[0].images_status) || !r.rows[0].theory_cache || !r.rows[0].prepared_task) return res.status(409).json({ error: 'preparation_not_ready' });
+  if (r.rows[0].theory_status !== 'ready' || r.rows[0].task_status !== 'ready' || !r.rows[0].theory_cache || !r.rows[0].prepared_task) return res.status(409).json({ error: 'preparation_not_ready' });
   await pool.query(`UPDATE topics SET published=true WHERE ${where}`, params);
   res.json({ published: true });
 });

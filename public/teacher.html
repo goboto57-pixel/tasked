@@ -670,21 +670,21 @@ function renderPreview(data) {
   }
   const ready = Boolean(theory?.pages?.length && task?.task && data.theoryStatus === 'ready' && data.taskStatus === 'ready');
   const imagesFinished = data.imagesStatus === 'ready' || data.imagesStatus === 'failed';
-  const canPublish = ready && imagesFinished;
+  const canPublish = ready;
   document.getElementById('previewPublish').disabled = !canPublish || data.published;
   document.getElementById('previewPublish').textContent = data.published ? previewText('Опубликовано', 'Жарияланды') : previewText('Опубликовать урок', 'Сабақты жариялау');
   const failed = data.theoryStatus === 'failed' || data.taskStatus === 'failed';
-  document.getElementById('previewRegenerate').disabled = !canPublish && !failed;
+  document.getElementById('previewRegenerate').disabled = (!canPublish && !failed) || (ready && !imagesFinished);
   document.getElementById('previewRetryImages').hidden = data.imagesStatus !== 'failed' || !ready;
   document.getElementById('previewState').textContent = failed ? [
     data.theoryStatus === 'failed' ? `${previewText('Теория', 'Теория')}: ${data.theoryError || previewText('не удалось подготовить', 'дайындау мүмкін болмады')}` : '',
     data.taskStatus === 'failed' ? `${previewText('Первое задание', 'Алғашқы тапсырма')}: ${data.taskError || previewText('не удалось подготовить', 'дайындау мүмкін болмады')}` : '',
   ].filter(Boolean).join(' ')
     : canPublish && data.imagesStatus === 'failed' ? previewText('Теория и задание готовы. Фото не удалось создать; ученики увидят схемы.', 'Теория мен тапсырма дайын. Фото жасалмады; оқушылар сызбаларды көреді.')
-    : canPublish ? previewText('Теория, задание и фото готовы. Проверьте материал и опубликуйте урок.', 'Теория, тапсырма және фотолар дайын. Материалды тексеріп, сабақты жариялаңыз.')
-    : ready ? previewText(`Фото для теории: ${data.imagePages?.length || 0} из 3.`, `Теория фотолары: ${data.imagePages?.length || 0}/3.`)
+    : canPublish && imagesFinished ? previewText('Теория, задание и фото готовы. Проверьте материал и опубликуйте урок.', 'Теория, тапсырма және фотолар дайын. Материалды тексеріп, сабақты жариялаңыз.')
+    : canPublish ? previewText(`Теория и задание готовы — урок можно публиковать. Фото готовятся: ${data.imagePages?.length || 0} из 3.`, `Теория мен тапсырма дайын — сабақты жариялауға болады. Фотолар дайындалуда: ${data.imagePages?.length || 0}/3.`)
       : previewText(`ИИ готовит материал: теория — ${data.theoryStatus}, задание — ${data.taskStatus}.`, `ЖИ материал дайындауда: теория — ${data.theoryStatus}, тапсырма — ${data.taskStatus}.`);
-  return canPublish || failed;
+  return failed || (canPublish && imagesFinished);
 }
 async function pollPreview(run) {
   if (run !== previewRun || !previewId) return;
