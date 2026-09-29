@@ -1,35 +1,31 @@
-# AI Репетитор
+# Tasked
 
-Сайт-репетитор: ИИ (Mistral Small) даёт теорию и задания, **каждое следующее задание подстраивается под результат предыдущего**. Плавающая кнопка 🎙 — ИИ слушает тебя (Azure Speech распознавание) и отвечает голосом Fish Audio; Azure Speech используется как резерв. Учитель через дэшборд (логин/пароль) создаёт темы — они появляются в каталоге.
+Учебная платформа на Node.js, Express и PostgreSQL. Mistral готовит материал урока, а учитель проверяет его до публикации.
 
-## Стек
-- Node.js + Express (деплой на Render как Web Service, `render.yaml` приложен)
-- PostgreSQL (бесплатно: [neon.tech](https://neon.tech) — Free Postgres, строку подключения в `DATABASE_URL`)
-- Gemini 3.8 Flash — короткие блоки теории, адаптивные задания разных интерактивных форматов и голосовой помощник
-- Gemini 3.1 Flash Image — тематические иллюстрации к объяснению и текущему заданию
-- Fish Audio S2.1 Pro Free — основная озвучка, спокойный женский русский голос и двуязычный женский русский/казахский голос
-- Azure Speech — резервная озвучка и распознавание речи ru-RU / kk-KZ
-- Таблицы `teachers`, `topics`, `progress` создаются автоматически при старте
+## Как устроен урок
 
-## Запуск локально
+1. Учитель создаёт тему. Она появляется в панели как черновик и пока скрыта от учеников.
+2. Сервер сразу запускает подготовку общей теории на русском и казахском и одного общего стартового задания. Результаты хранятся в `topics.theory_cache` и `topics.prepared_task`.
+3. В предпросмотре учитель видит три окна теории, задание и ключ ответа. Можно повторить генерацию или изменить тему. После проверки учитель публикует урок.
+4. Ученик проходит общую теорию и стартовое задание. Последующие задания Mistral создаёт отдельно по истории ответов; сервер проверяет формальные ответы по ключу и меняет сложность.
+5. Голосовой помощник Mistral получает контекст опубликованной теории и текущего задания. Озвучка использует Fish Audio, затем Azure Speech, затем подходящий системный женский голос; распознавание речи использует Azure Speech.
+
+Учебные схемы рисуются локально из структурированных данных Mistral. Внешний сервис для изображений не требуется.
+
+## Локальный запуск
+
 ```bash
-cp .env.example .env   # заполни ключи
+cp .env.example .env
 npm install
-npm start              # http://localhost:3000
+npm start
 ```
 
-## Деплой на Render
-1. Бесплатная БД: создай проект на [neon.tech](https://neon.tech), скопируй Connection String.
-2. Новый Web Service → подключи репозиторий (или используй `render.yaml` / Blueprint).
-3. Environment: `DATABASE_URL`, `GEMINI_API_KEY`, `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`, `SESSION_SECRET`, `ADMIN_PASSWORD` (initial creator account; choose a strong unique password).
+Откройте `http://localhost:3000`. Для работы нужны `DATABASE_URL`, `MISTRAL_API_KEY`, `SESSION_SECRET` и `ADMIN_PASSWORD`. Настройки голоса приведены в `.env.example`. Приложение автоматически создаёт таблицы и добавляет новые поля при запуске.
 
-### Student sign-in (Firebase Authentication)
+## Вход учеников
 
-Students sign in with Google or a one-time email code. For Google, create a Firebase project, enable Google under Authentication providers, add the app domain (plus `localhost` for development) to authorized domains, and set `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID`, `FIREBASE_APP_ID`, and the private Admin SDK service-account JSON in `FIREBASE_SERVICE_ACCOUNT`. For email codes, create a Brevo account, verify the sender address, and set `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, and optionally `BREVO_SENDER_NAME`. Codes expire after 10 minutes; resend cooldown and daily abuse limits are enforced by the app. Brevo's free plan currently includes 300 sends per day. The server creates a verified Firebase account only after the code is confirmed, so Google and code sign-in share the same account. Until Firebase and Brevo are configured, student lessons and AI endpoints stay locked. Legacy student password endpoints are disabled; teacher/admin dashboard credentials remain separate.
+Ученик входит через Google (Firebase Authentication) или подтверждает одноразовый код из письма (Brevo). Для Google включите провайдер в Firebase Authentication, добавьте домен сайта и `localhost` в разрешённые домены, затем заполните `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID`, `FIREBASE_APP_ID`, `FIREBASE_SERVICE_ACCOUNT`. Для почтового кода заполните `BREVO_API_KEY`, `BREVO_SENDER_EMAIL` и, при необходимости, `BREVO_SENDER_NAME`. Код действует 10 минут. Вход учителя и администратора остаётся отдельным.
 
-Gemini text requests may use the free tier when the selected model and project quota allow it. Image generation with `gemini-3.1-flash-image` is paid-tier only and is opt-in (`GEMINI_IMAGE_ENABLED=true`); leave it off on a free-only key.
+## Деплой
 
-## Страницы
-- `/` — каталог тем + плавающая голосовая кнопка (свободный разговор с ИИ)
-- `/lesson.html?topic=ID` — урок: теория → задания с адаптацией; 🎙 диктует ответ, ИИ отвечает голосом
-- `/teacher.html` — вход/регистрация учителя, создание и удаление тем, прогресс учеников
+Проект можно развернуть как Node.js Web Service с PostgreSQL, например с конфигурацией `render.yaml`. Установите переменные окружения из `.env.example` в настройках сервиса. Публичные маршруты урока требуют входа ученика; черновики доступны только учителю через панель.

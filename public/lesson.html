@@ -5,12 +5,13 @@
 <title>Урок — tasked</title>
 <link rel="icon" href="/img/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#0b0c0e">
+<meta name="theme-color" content="#f3f5f7">
 <link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/corporate.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
-<script>try{document.documentElement.dataset.theme=localStorage.getItem('tasked_theme')==='light'?'light':'dark'}catch(e){document.documentElement.dataset.theme='dark'}</script>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('tasked_theme')==='dark'?'dark':'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
 </head>
 <body>
 <header class="topbar">
@@ -129,6 +130,11 @@
     <div class="messages" id="chatLog">
       <div class="msg ai" id="greetMsg" data-i18n="greet">Привет! Я твой ИИ-учитель. Спроси меня о чём угодно по теме — голосом или текстом.</div>
     </div>
+    <div class="assistant-prompts">
+      <button class="btn small" onclick="sendChat(tr('promptExampleQuestion'))" data-i18n="promptExample">Другой пример</button>
+      <button class="btn small" onclick="sendChat(tr('promptHintQuestion'))" data-i18n="promptHint">Подсказка</button>
+      <button class="btn small" onclick="sendChat(tr('promptUseQuestion'))" data-i18n="promptUse">Где пригодится?</button>
+    </div>
     <div class="input-row">
       <input id="chatInput" data-i18n-ph="askPh" placeholder="Спросить что-нибудь…" onkeydown="if(event.key==='Enter')sendChat()">
       <button class="btn primary" id="chatSendBtn" onclick="sendChat()" aria-label="Отправить вопрос"><i data-icon="send"></i></button>
@@ -163,10 +169,6 @@ let curKind = 'short', turnPending = false;
 let theoryPages = [], theoryPageIndex = 0;
 let theoryLoadBusy = false;
 const chips = [];
-const visualState = {
-  theory: { version: 0, controller: null, url: null },
-  task: { version: 0, controller: null, url: null },
-};
 
 function curLang() { return (window.i18n && i18n.get()) || 'ru'; }
 function tr(k) { return (window.i18n && i18n.t(k)) || k; }
@@ -277,31 +279,31 @@ function freeDiagramSvg(spec) {
   const items = (Array.isArray(spec?.items) ? spec.items : []).slice(0, 5);
   if (items.length < 2) return '';
   const title = xmlText(spec.title || '');
-  const palette = ['#81947a', '#c18a68', '#8a9da0', '#b6a064', '#9a8b9d'];
-  const heading = title ? `<text x="32" y="34" fill="#343a35" font-size="16" font-weight="700">${title}</text>` : '';
+  const palette = ['#295a75', '#7b91a4', '#567b8c', '#a27e51', '#617689'];
+  const heading = title ? `<text x="32" y="34" fill="#172637" font-size="16" font-weight="700">${title}</text>` : '';
   let shapes = '';
   if (spec.kind === 'bars') {
     const max = Math.max(...items.map(item => Math.max(1, Number(String(item.value).replace(',', '.')) || 1)));
     shapes = items.map((item, i) => {
       const y = 58 + i * 31, amount = Number(String(item.value).replace(',', '.')) || max * 0.58;
-      return `<text x="32" y="${y + 14}" fill="#4b514b" font-size="13">${xmlText(item.label)}</text><rect x="220" y="${y}" width="${Math.max(14, Math.round(340 * amount / max))}" height="19" rx="7" fill="${palette[i % palette.length]}" opacity=".82"/><text x="574" y="${y + 14}" fill="#4b514b" font-size="12">${xmlText(item.value)}</text>`;
+      return `<text x="32" y="${y + 14}" fill="#526273" font-size="13">${xmlText(item.label)}</text><rect x="220" y="${y}" width="${Math.max(14, Math.round(340 * amount / max))}" height="19" rx="7" fill="${palette[i % palette.length]}" opacity=".82"/><text x="574" y="${y + 14}" fill="#526273" font-size="12">${xmlText(item.value)}</text>`;
     }).join('');
   } else if (spec.kind === 'compare') {
     const width = Math.floor(536 / items.length);
     shapes = items.map((item, i) => {
       const x = 32 + i * (width + 12);
-      return `<rect x="${x}" y="65" width="${width}" height="120" rx="14" fill="#f3f0e8" stroke="#d9d4c8"/><rect x="${x}" y="65" width="${width}" height="7" rx="3" fill="${palette[i % palette.length]}"/><text x="${x + 15}" y="105" fill="#303630" font-size="14" font-weight="700">${xmlText(item.label)}</text><text x="${x + 15}" y="132" fill="#616860" font-size="12">${xmlText(item.value)}</text>`;
+      return `<rect x="${x}" y="65" width="${width}" height="120" rx="14" fill="#f2f5f7" stroke="#d8e0e7"/><rect x="${x}" y="65" width="${width}" height="7" rx="3" fill="${palette[i % palette.length]}"/><text x="${x + 15}" y="105" fill="#172637" font-size="14" font-weight="700">${xmlText(item.label)}</text><text x="${x + 15}" y="132" fill="#526273" font-size="12">${xmlText(item.value)}</text>`;
     }).join('');
   } else {
     const nodeW = Math.min(150, Math.floor(570 / items.length));
     const gap = (640 - items.length * nodeW) / (items.length + 1);
     shapes = items.map((item, i) => {
       const x = gap + i * (nodeW + gap), y = spec.kind === 'cycle' ? (i % 2 ? 106 : 76) : 86;
-      const connector = i < items.length - 1 ? `<path d="M ${x + nodeW + 3} ${y + 41} H ${x + nodeW + gap - 6}" stroke="#aaa99d" stroke-width="2" marker-end="url(#arrow)"/>` : '';
-      return `${connector}<rect x="${x}" y="${y}" width="${nodeW}" height="82" rx="14" fill="#f3f0e8" stroke="#d9d4c8"/><circle cx="${x + 17}" cy="${y + 18}" r="5" fill="${palette[i % palette.length]}"/><text x="${x + 14}" y="${y + 40}" fill="#303630" font-size="13" font-weight="700">${xmlText(item.label)}</text><text x="${x + 14}" y="${y + 61}" fill="#616860" font-size="11">${xmlText(item.value)}</text>`;
+      const connector = i < items.length - 1 ? `<path d="M ${x + nodeW + 3} ${y + 41} H ${x + nodeW + gap - 6}" stroke="#b5c3cd" stroke-width="2" marker-end="url(#arrow)"/>` : '';
+      return `${connector}<rect x="${x}" y="${y}" width="${nodeW}" height="82" rx="14" fill="#f2f5f7" stroke="#d8e0e7"/><circle cx="${x + 17}" cy="${y + 18}" r="5" fill="${palette[i % palette.length]}"/><text x="${x + 14}" y="${y + 40}" fill="#172637" font-size="13" font-weight="700">${xmlText(item.label)}</text><text x="${x + 14}" y="${y + 61}" fill="#526273" font-size="11">${xmlText(item.value)}</text>`;
     }).join('');
   }
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 220"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0 L0 6 L7 3 z" fill="#aaa99d"/></marker></defs><rect width="640" height="220" rx="18" fill="#faf9f5"/>${heading}${shapes}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 220"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0 L0 6 L7 3 z" fill="#b5c3cd"/></marker></defs><rect width="640" height="220" rx="18" fill="#ffffff"/>${heading}${shapes}</svg>`;
 }
 function showFreeVisual(kind, spec, caption) {
   const wrap = $(kind + 'Visual'), img = $(kind + 'VisualImg');
@@ -326,39 +328,6 @@ async function beginPractice() {
 function returnToTheory() {
   $('taskPane').style.display = 'none'; $('theoryPane').style.display = 'block';
   $('lessonGrid').classList.remove('task-only'); setStep(1); renderTheoryWindow();
-}
-async function showLessonVisual(kind, prompt, caption) {
-  const state = visualState[kind];
-  const wrap = $(kind + 'Visual'), img = $(kind + 'VisualImg');
-  state.version++;
-  const version = state.version;
-  if (state.controller) state.controller.abort();
-  if (state.url) URL.revokeObjectURL(state.url);
-  state.url = null;
-  img.removeAttribute('src'); img.hidden = true;
-  $(kind + 'VisualCaption').textContent = '';
-  if (!prompt) { wrap.hidden = true; return; }
-  state.controller = new AbortController();
-  wrap.hidden = false; wrap.classList.add('loading');
-  $(kind + 'VisualLoading').hidden = false;
-  try {
-    const response = await fetch('/api/ai/visual', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt }), signal: state.controller.signal,
-    });
-    if (!response.ok) throw new Error('visual unavailable');
-    const blob = await response.blob();
-    if (!blob.type.startsWith('image/')) throw new Error('invalid visual');
-    const url = URL.createObjectURL(blob);
-    if (version !== state.version) { URL.revokeObjectURL(url); return; }
-    state.url = url;
-    img.src = url; img.alt = caption || tr(kind === 'theory' ? 'theoryK' : 'taskK'); img.hidden = false;
-    $(kind + 'VisualCaption').textContent = caption || '';
-    $(kind + 'VisualLoading').hidden = true;
-    wrap.classList.remove('loading');
-  } catch (error) {
-    if (version === state.version) wrap.hidden = true;
-  }
 }
 function setStep(n) {
   // 1 = theory loading, 2 = solving, 3 = finished
@@ -466,13 +435,20 @@ async function nextTurn(answer) {
   $('dictBtn').disabled = true;
   $('feedbackBox').style.display = 'none';
   try {
-    const r = await fetch('/api/ai/turn', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topicId, studentKey: studentKey(), answer, lang: curLang() })
-    });
-    const data = await r.json();
+    let r, data;
+    for (let wait = 0; wait < 75; wait++) {
+      r = await fetch('/api/ai/turn', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topicId, studentKey: studentKey(), answer, lang: curLang() })
+      });
+      data = await r.json();
+      if (r.status !== 202 || data.status !== 'preparing_first_task') break;
+      $('status').textContent = tr('firstTaskPreparing');
+      await new Promise(resolve => setTimeout(resolve, 1400));
+    }
+    if (r.status === 202) { $('status').textContent = tr('firstTaskUnavailable'); return; }
     if (!r.ok || data.error) {
-      const map = { topic_not_found: tr('errTopic'), bad_request: tr('errTopic'), ai_error: tr('errAi'), grading_unavailable: tr('gradingUnavailable'), unauthorized: tr('authRequired') };
+      const map = { topic_not_found: tr('errTopic'), bad_request: tr('errTopic'), ai_error: tr('errAi'), grading_unavailable: tr('gradingUnavailable'), first_task_unavailable: tr('firstTaskUnavailable'), unauthorized: tr('authRequired') };
       $('status').textContent = map[data.error] || tr('errAi');
       return;
     }
@@ -731,7 +707,11 @@ function addMsg(who, text) {
   $('chatLog').scrollTop = $('chatLog').scrollHeight;
 }
 function openVoice() { const m = $('voiceModal'); m.style.display = 'flex'; m.classList.add('open'); $('chatInput').focus(); }
-function closeVoice() { const m = $('voiceModal'); m.style.display = 'none'; m.classList.remove('open'); }
+function closeVoice() {
+  const m = $('voiceModal'); m.style.display = 'none'; m.classList.remove('open');
+  if (micOn) { stopRec(micRec); micRec = null; micOn = false; $('micBtn').classList.remove('listening'); }
+  Voice.stopAll(); showStatus('');
+}
 
 async function sendChat(forced) {
   const q = String(forced !== undefined ? forced : $('chatInput').value).trim();
@@ -748,16 +728,16 @@ async function sendChat(forced) {
   try {
     const r = await fetch('/api/ai/voice', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic: $('topicTitle').textContent, history: chatHistory.slice(-10), lang: curLang() })
+      body: JSON.stringify({ topicId, currentTask: lastTask, history: chatHistory.slice(-10), lang: curLang() })
     });
     const data = await r.json();
     if (!r.ok || data.error || !data.reply) {
-      thinking.textContent = data.error === 'ai_error' ? tr('errAi') : tr('noConn');
+      thinking.textContent = data.error === 'ai_error' ? tr('errAi') : data.error === 'topic_not_found' ? tr('errTopic') : tr('noConn');
       chatHistory.splice(historyIndex, 1);
     } else {
       thinking.textContent = data.reply;
       chatHistory.push({ role: 'teacher', text: data.reply });
-      if (soundOn) Voice.speak(data.reply).then(ok => { if (!ok) showStatus(tr('voiceUnavailable')); });
+      if (soundOn && $('voiceModal').classList.contains('open')) Voice.speak(data.reply).then(ok => { if (!ok) showStatus(tr('voiceUnavailable')); });
     }
   } catch (e) {
     thinking.textContent = tr('noConn');

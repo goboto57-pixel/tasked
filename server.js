@@ -62,6 +62,10 @@ async function initDb() {
       theory_cache JSONB,
       theory_status TEXT NOT NULL DEFAULT 'pending',
       theory_version INT NOT NULL DEFAULT 0,
+      prepared_task JSONB,
+      task_status TEXT NOT NULL DEFAULT 'pending',
+      task_started_at TIMESTAMPTZ,
+      published BOOLEAN NOT NULL DEFAULT true,
       theory_started_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT now()
     );
@@ -98,6 +102,10 @@ async function initDb() {
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS theory_status TEXT NOT NULL DEFAULT 'pending'`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS theory_version INT NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS theory_started_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS prepared_task JSONB`);
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS task_status TEXT NOT NULL DEFAULT 'pending'`);
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS task_started_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS published BOOLEAN NOT NULL DEFAULT true`);
   await pool.query(`UPDATE topics SET theory_cache=NULL, theory_status='pending' WHERE theory_version < 2 AND theory_cache IS NOT NULL`);
   await pool.query(`ALTER TABLE progress ADD COLUMN IF NOT EXISTS student_id INT REFERENCES students(id) ON DELETE CASCADE`);
   await pool.query(`ALTER TABLE progress ADD COLUMN IF NOT EXISTS completed BOOLEAN DEFAULT false`);
@@ -522,14 +530,56 @@ app.delete('/api/admin/teachers/:id', authAdmin, async (req, res) => {
 
 // ---------- topics ----------
 app.get('/api/topics', async (req, res) => {
-  const r = await pool.query('SELECT id, title, description, theory_override, theory_status, created_at FROM topics ORDER BY created_at DESC');
+  const r = await pool.query('SELECT id, title, description, theory_status, task_status, created_at FROM topics WHERE published=true ORDER BY created_at DESC');
   res.json(r.rows);
 });
 
+app.get('/api/teacher/topics', authTeacher, async (req, res) => {
+  const r = req.user.role === 'admin'
+    ? await pool.query('SELECT id, title, description, theory_override, theory_status, task_status, published, created_at FROM topics ORDER BY created_at DESC')
+    : await pool.query('SELECT id, title, description, theory_override, theory_status, task_status, published, created_at FROM topics WHERE teacher_id=$1 ORDER BY created_at DESC', [req.user.id]);
+  res.json(r.rows);
+});
+
+app.get('/api/teacher/topics/:id/preview', authTeacher, async (req, res) => {
+  await pool.query("UPDATE topics SET theory_status='pending' WHERE id=$1 AND theory_status='generating' AND theory_started_at < now()-interval '5 minutes'", [req.params.id]);
+  await pool.query("UPDATE topics SET task_status='pending' WHERE id=$1 AND task_status='generating' AND task_started_at < now()-interval '5 minutes'", [req.params.id]);
+  const r = req.user.role === 'admin'
+    ? await pool.query('SELECT * FROM topics WHERE id=$1', [req.params.id])
+    : await pool.query('SELECT * FROM topics WHERE id=$1 AND teacher_id=$2', [req.params.id, req.user.id]);
+  const topic = r.rows[0];
+  if (!topic) return res.status(404).json({ error: 'topic_not_found' });
+  startTopicPreparation(topic);
+  res.set('Cache-Control', 'no-store').json({ id: topic.id, title: topic.title, description: topic.description,
+    published: topic.published, theoryStatus: topic.theory_status, taskStatus: topic.task_status,
+    theory: topic.theory_cache, firstTask: topic.prepared_task });
+});
+
+app.post('/api/teacher/topics/:id/publish', authTeacher, async (req, res) => {
+  const where = req.user.role === 'admin' ? 'id=$1' : 'id=$1 AND teacher_id=$2';
+  const params = req.user.role === 'admin' ? [req.params.id] : [req.params.id, req.user.id];
+  const r = await pool.query(`SELECT theory_status, task_status, theory_cache, prepared_task FROM topics WHERE ${where}`, params);
+  if (!r.rows[0]) return res.status(404).json({ error: 'topic_not_found' });
+  if (r.rows[0].theory_status !== 'ready' || r.rows[0].task_status !== 'ready' || !r.rows[0].theory_cache || !r.rows[0].prepared_task) return res.status(409).json({ error: 'preparation_not_ready' });
+  await pool.query(`UPDATE topics SET published=true WHERE ${where}`, params);
+  res.json({ published: true });
+});
+
+app.post('/api/teacher/topics/:id/regenerate', authTeacher, async (req, res) => {
+  const where = req.user.role === 'admin' ? 'id=$1' : 'id=$1 AND teacher_id=$2';
+  const params = req.user.role === 'admin' ? [req.params.id] : [req.params.id, req.user.id];
+  if (theoryJobs.has(Number(req.params.id)) || firstTaskJobs.has(Number(req.params.id))) return res.status(409).json({ error: 'preparation_in_progress' });
+  const r = await pool.query(`UPDATE topics SET theory_cache=NULL, theory_status='pending', theory_version=0, prepared_task=NULL, task_status='pending', published=false WHERE ${where} RETURNING *`, params);
+  if (!r.rows[0]) return res.status(404).json({ error: 'topic_not_found' });
+  startTopicPreparation(r.rows[0]);
+  res.status(202).json({ status: 'preparing' });
+});
+
 app.get('/api/topics/:id/theory', authStudent, async (req, res) => {
-  const result = await pool.query('SELECT id, title, description, theory_override, theory_cache, theory_status, theory_version, theory_started_at FROM topics WHERE id=$1', [req.params.id]);
+  const result = await pool.query('SELECT id, title, description, theory_override, theory_cache, theory_status, theory_version, theory_started_at, published FROM topics WHERE id=$1', [req.params.id]);
   const topic = result.rows[0];
   if (!topic) return res.status(404).json({ error: 'topic_not_found' });
+  if (!topic.published) return res.status(404).json({ error: 'topic_not_found' });
   if (Number(topic.theory_version) < 2) {
     // A worker that died mid-generation leaves 'generating' behind forever —
     // treat generations older than 5 minutes as stale and restart them.
@@ -550,9 +600,9 @@ app.post('/api/topics', authTeacher, async (req, res) => {
   if (!title) return res.status(400).json({ error: 'Нужно название темы' });
   const teacherId = req.user.role === 'admin' ? (req.body.teacherId || req.user.id) : req.user.id;
   const r = await pool.query(
-    'INSERT INTO topics (teacher_id, title, description) VALUES ($1,$2,$3) RETURNING *',
+    'INSERT INTO topics (teacher_id, title, description, published) VALUES ($1,$2,$3,false) RETURNING *',
     [teacherId, title, description || '']);
-  generateAndCacheTopicTheory(r.rows[0]).catch(error => console.error('Topic theory generation failed:', error.message));
+  startTopicPreparation(r.rows[0]);
   res.json(r.rows[0]);
 });
 
@@ -563,6 +613,7 @@ app.patch('/api/topics/:id', authTeacher, async (req, res) => {
     : await pool.query('SELECT * FROM topics WHERE id=$1 AND teacher_id=$2', [req.params.id, req.user.id]);
   if (!q.rows.length) return res.status(404).json({ error: 'not found' });
   const t = q.rows[0];
+  if (theoryJobs.has(t.id) || firstTaskJobs.has(t.id)) return res.status(409).json({ error: 'preparation_in_progress' });
   const r = await pool.query(
     'UPDATE topics SET title=$1, description=$2, theory_override=$3 WHERE id=$4 RETURNING *',
     [
@@ -572,9 +623,9 @@ app.patch('/api/topics/:id', authTeacher, async (req, res) => {
       req.params.id,
     ]);
   if (r.rows[0].title !== t.title || r.rows[0].description !== t.description || r.rows[0].theory_override !== t.theory_override) {
-    pool.query("UPDATE topics SET theory_cache=NULL, theory_status='pending', theory_version=0 WHERE id=$1", [req.params.id])
-      .then(() => generateAndCacheTopicTheory(r.rows[0]))
-      .catch(error => console.error('Topic theory refresh failed:', error.message));
+    const refreshed = await pool.query("UPDATE topics SET theory_cache=NULL, theory_status='pending', theory_version=0, prepared_task=NULL, task_status='pending', published=false WHERE id=$1 RETURNING *", [req.params.id]);
+    startTopicPreparation(refreshed.rows[0]);
+    return res.json(refreshed.rows[0]);
   }
   res.json(r.rows[0]);
 });
@@ -787,7 +838,7 @@ app.get('/api/student/export.csv', authStudent, async (req, res) => {
 // ---------- Mistral AI (bilingual RU/KK) ----------
 // Primary: ministral-14b — proven fast and reliable for lessons. Magistral
 // models stay in the chain as fallback for when their quota allows.
-const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'ministral-14b-latest';
+const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'mistral-small-latest';
 
 async function mistralChat(messages, maxTokens = 900, json = false, timeoutMs = 60000) {
   if (!process.env.MISTRAL_API_KEY) throw new Error('MISTRAL_API_KEY is not configured');
@@ -809,7 +860,7 @@ async function mistralChat(messages, maxTokens = 900, json = false, timeoutMs = 
   
   // Fallback chain for Mistral models
   const fallbackChain = [
-    process.env.MISTRAL_FALLBACK_MODEL || 'magistral-small-latest',
+    process.env.MISTRAL_FALLBACK_MODEL || 'ministral-14b-latest',
     'magistral-small-latest', 'magistral-medium-latest',
   ];
   const models = [MISTRAL_MODEL, ...fallbackChain].filter((m, i, a) => m && a.indexOf(m) === i);
@@ -897,6 +948,62 @@ async function mistralJson(messages, maxTokens = 900, timeoutMs = 60000) {
 }
 
 const theoryJobs = new Map();
+const firstTaskJobs = new Map();
+function startTopicPreparation(topic) {
+  const staleTheory = topic.theory_status === 'generating' && topic.theory_started_at && Date.now() - new Date(topic.theory_started_at).getTime() > 5 * 60_000;
+  const staleTask = topic.task_status === 'generating' && topic.task_started_at && Date.now() - new Date(topic.task_started_at).getTime() > 5 * 60_000;
+  if (staleTheory && !theoryJobs.has(topic.id)) topic.theory_status = 'pending';
+  if (staleTask && !firstTaskJobs.has(topic.id)) topic.task_status = 'pending';
+  if (!topic.theory_cache && topic.theory_status === 'pending') {
+    generateAndCacheTopicTheory(topic).catch(error => console.error('Topic theory generation failed:', error.message));
+  }
+  if (!topic.prepared_task && topic.task_status === 'pending') {
+    generateAndCacheFirstTask(topic).catch(error => console.error('First task generation failed:', error.message));
+  }
+}
+function generateAndCacheFirstTask(topic) {
+  if (firstTaskJobs.has(topic.id)) return firstTaskJobs.get(topic.id);
+  const job = generateFirstTaskJob(topic).finally(() => firstTaskJobs.delete(topic.id));
+  firstTaskJobs.set(topic.id, job);
+  return job;
+}
+async function generateFirstTaskJob(topic) {
+  await pool.query("UPDATE topics SET task_status='generating', task_started_at=now() WHERE id=$1", [topic.id]);
+  try {
+    const requestedType = ['scenario_choice', 'evidence_choice', 'multiple_select', 'ordering', 'categorize'][topic.id % 5];
+    const output = await mistralJson([
+      { role: 'system', content: `Ты проектируешь диагностическое задание для школьного интерактивного урока. Верни JSON {"ru":{...},"kk":{...}}: одно и то же содержательное задание на русском и казахском. Формат ${requestedType}. Уровень 3 из 5: нужна работа с ситуацией, данными или причинной связью, а не повторение определения. Для каждого языка обязательны task, taskType, options (для выбора), items (для порядка), pairs (для категорий), visualSpec {kind:"concept|sequence|compare|bars",title,items:[{label,value}]}, visualCaption и answerKey {expected,accepted:[],rubric,rationale}. Для выбора answerKey.expected — точный текст верного варианта; для multiple_select — массив точных текстов; для ordering — массив всех items в правильной последовательности; для categorize — объект соответствий left:right. Сделай правдоподобные неверные варианты, однозначное условие и краткое объяснение решения. Не раскрывай ответ в тексте задания или схеме. Если формат не подходит к предмету, используй scenario_choice. Только валидный JSON.` },
+      { role: 'user', content: `Тема: ${String(topic.title).slice(0, 200)}\nОписание и программа: ${String(topic.description || '').slice(0, 1500)}\nМатериал учителя: ${String(topic.theory_override || '').slice(0, 2500)}` },
+    ], 2400, 90000);
+    const root = findTheoryPayload(output) || output;
+    const clean = {};
+    for (const lang of ['ru', 'kk']) {
+      clean[lang] = normalizeLessonTurn(root[lang], false);
+      clean[lang].difficulty = 3;
+      clean[lang].correct = null;
+      clean[lang].feedback = '';
+      if (!validPreparedTask(clean[lang])) throw new Error(`Incomplete or inconsistent ${lang} first task`);
+    }
+    await pool.query("UPDATE topics SET prepared_task=$1::jsonb, task_status='ready' WHERE id=$2", [JSON.stringify(clean), topic.id]);
+  } catch (error) {
+    await pool.query("UPDATE topics SET task_status='failed' WHERE id=$1", [topic.id]).catch(() => {});
+    throw error;
+  }
+}
+function validPreparedTask(task) {
+  if (task.taskType === 'short_answer') return false;
+  return validGeneratedTask(task);
+}
+function validGeneratedTask(task) {
+  if (!task.task || !task.answerKey || task.answerKey.expected == null || task.answerKey.expected === '') return false;
+  const expected = task.answerKey.expected;
+  if (TASK_OPTION_FORMATS.has(task.taskType)) return typeof expected === 'string' && task.options.some(option => comparable(option) === comparable(expected));
+  if (task.taskType === 'multiple_select') return Array.isArray(expected) && expected.length > 0 && expected.every(value => task.options.some(option => comparable(option) === comparable(value)));
+  if (task.taskType === 'ordering') return Array.isArray(expected) && sameSet(expected, task.items);
+  if (TASK_PAIR_FORMATS.has(task.taskType)) return expected && typeof expected === 'object' && !Array.isArray(expected) && task.pairs.length === Object.keys(expected).length && task.pairs.every(pair => Object.prototype.hasOwnProperty.call(expected, pair.left) && comparable(expected[pair.left]) === comparable(pair.right));
+  if (task.taskType === 'numeric') return Number.isFinite(numericValue(expected));
+  return typeof expected === 'string' || typeof expected === 'number';
+}
 function generateAndCacheTopicTheory(topic) {
   if (theoryJobs.has(topic.id)) return theoryJobs.get(topic.id);
   const job = generateTopicTheoryJob(topic).finally(() => theoryJobs.delete(topic.id));
@@ -940,57 +1047,6 @@ async function generateTopicTheoryJob(topic) {
     throw error;
   }
 }
-
-const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
-const lessonVisualCache = new Map();
-let lessonVisualCacheBytes = 0;
-app.post('/api/ai/visual', authStudent, async (req, res) => {
-  if (process.env.GEMINI_IMAGE_ENABLED !== 'true') return res.status(503).json({ error: 'gemini_image_requires_paid_opt_in' });
-  const prompt = String(req.body?.prompt || '').trim().slice(0, 1400);
-  if (!prompt) return res.status(400).json({ error: 'prompt_required' });
-  if (!process.env.GEMINI_API_KEY) return res.status(503).json({ error: 'gemini_not_configured' });
-  const cacheKey = crypto.createHash('sha256').update(prompt).digest('hex');
-  const cached = lessonVisualCache.get(cacheKey);
-  if (cached) {
-    res.set({ 'Content-Type': cached.mimeType, 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff' });
-    return res.send(cached.bytes);
-  }
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 60000);
-  try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_IMAGE_MODEL)}:generateContent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: `Create one accurate school-learning visual based on this description. Use a calm textbook illustration style, clean composition, no neon, no logos, no decorative lettering, and do not reveal or add a solution. Keep diagrams scientifically and mathematically accurate. Description: ${prompt}` }] }],
-        generationConfig: { responseModalities: ['IMAGE'] },
-      }),
-      signal: ctrl.signal,
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error?.message || `Gemini image API ${response.status}`);
-    const part = payload.candidates?.[0]?.content?.parts?.find(item => item.inlineData?.data || item.inline_data?.data);
-    const image = part?.inlineData || part?.inline_data;
-    const mimeType = String(image?.mimeType || image?.mime_type || 'image/png');
-    if (!image?.data || !['image/png', 'image/jpeg', 'image/webp'].includes(mimeType)) throw new Error('Gemini returned no supported image');
-    const bytes = Buffer.from(image.data, 'base64');
-    if (!bytes.length || bytes.length > 8 * 1024 * 1024) throw new Error('Gemini image has an invalid size');
-    if (bytes.length <= 3 * 1024 * 1024) {
-      lessonVisualCache.set(cacheKey, { bytes, mimeType });
-      lessonVisualCacheBytes += bytes.length;
-      while (lessonVisualCacheBytes > 24 * 1024 * 1024 && lessonVisualCache.size) {
-        const oldest = lessonVisualCache.keys().next().value;
-        lessonVisualCacheBytes -= lessonVisualCache.get(oldest).bytes.length;
-        lessonVisualCache.delete(oldest);
-      }
-    }
-    res.set({ 'Content-Type': mimeType, 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff' });
-    res.send(bytes);
-  } catch (error) {
-    console.error('Lesson image generation failed', String(error.message || error).slice(0, 240));
-    res.status(502).json({ error: 'visual_unavailable' });
-  } finally { clearTimeout(timer); }
-});
 
 const SYSTEM_RU = `Ты — сильный школьный учитель и автор интерактивных уроков. Пиши только по-русски, простыми точными словами, без эмодзи, сюсюканья и длинных лекций. Урок должен ощущаться как живое занятие: короткая мысль → наглядный пример → действие ученика → конкретная обратная связь.
 ТЕОРИЯ ГОТОВИТСЯ ОТДЕЛЬНО ДО УРОКА. В ответах практики всегда оставляй поля theory, theoryBlocks, theoryVisualPrompt и theoryVisualCaption пустыми. Сразу создавай только очередную интерактивную задачу.
@@ -1233,7 +1289,7 @@ async function adaptiveTurn({ topic, lang, history, answer, grading = null, diff
   ], 1100);
 }
 
-async function saveProgress(prog, history, topicId, studentKey, studentId) {
+async function saveProgress(prog, history, topicId, studentKey, studentId, answered = true) {
   // score = number of correct answers (not teacher turns)
   let score = 0;
   for (const h of history) {
@@ -1241,8 +1297,8 @@ async function saveProgress(prog, history, topicId, studentKey, studentId) {
     try { if (JSON.parse(h.text).correct === true) score++; } catch { /* ignore */ }
   }
   await pool.query(
-    'UPDATE progress SET history=$1::jsonb, score=$2, attempts=attempts+1, updated_at=now(), student_id=COALESCE(student_id,$4) WHERE id=$3',
-    [JSON.stringify(history.slice(-80)), score, prog.id, studentId]);
+    'UPDATE progress SET history=$1::jsonb, score=$2, attempts=attempts+$5, updated_at=now(), student_id=COALESCE(student_id,$4) WHERE id=$3',
+    [JSON.stringify(history.slice(-80)), score, prog.id, studentId, answered ? 1 : 0]);
 }
 
 app.post('/api/ai/turn', authStudent, async (req, res) => {
@@ -1263,6 +1319,7 @@ app.post('/api/ai/turn', authStudent, async (req, res) => {
 
   const topic = (await pool.query('SELECT * FROM topics WHERE id=$1', [topicId])).rows[0];
   if (!topic) return res.status(404).json({ error: 'topic_not_found' });
+  if (!topic.published) return res.status(404).json({ error: 'topic_not_found' });
   const teacherExamples = (await pool.query('SELECT kind, prompt, answer, options FROM tasks WHERE topic_id=$1 ORDER BY id LIMIT 8', [topicId])).rows;
 
   let prog = (await pool.query('SELECT * FROM progress WHERE topic_id=$1 AND student_key=$2', [topicId, studentKey])).rows[0];
@@ -1297,6 +1354,20 @@ app.post('/api/ai/turn', authStudent, async (req, res) => {
       mastered: false, resumed: true,
     });
   }
+  if (!hasAnswer && firstTurn) {
+    if (!topic.prepared_task || topic.task_status !== 'ready') {
+      if (topic.task_status === 'failed') return res.status(503).json({ error: 'first_task_unavailable' });
+      startTopicPreparation(topic);
+      return res.status(202).json({ status: 'preparing_first_task' });
+    }
+    const prepared = topic.prepared_task[lang] || topic.prepared_task.ru;
+    if (!prepared?.task || !prepared?.answerKey) return res.status(503).json({ error: 'first_task_unavailable' });
+    const initial = { ...prepared, correct: null, feedback: '', difficulty: 3, ...currentMastery };
+    history.push({ role: 'teacher', text: JSON.stringify(initial) });
+    await saveProgress(prog, history, topicId, studentKey, studentId, false);
+    const { answerKey, ...publicTurn } = initial;
+    return res.json(publicTurn);
+  }
   let grading = null;
   if (hasAnswer) {
     const activeTask = [...teacherEntries].reverse().find(entry => entry.task);
@@ -1315,11 +1386,14 @@ app.post('/api/ai/turn', authStudent, async (req, res) => {
 
   try {
     const nextDifficulty = hasAnswer ? targetDifficulty(teacherEntries, grading.correct) : targetDifficulty(teacherEntries, null);
-    const generated = await adaptiveTurn({
-      topic, lang, history, answer: answerText, grading,
-      difficulty: nextDifficulty, firstTurn, teacherExamples,
-    });
-    const ai = normalizeLessonTurn(generated, false);
+    let ai;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const generated = await adaptiveTurn({ topic, lang, history, answer: answerText, grading,
+        difficulty: nextDifficulty, firstTurn, teacherExamples });
+      ai = normalizeLessonTurn(generated, false);
+      if (validGeneratedTask(ai)) break;
+      if (attempt === 1) throw new Error('Mistral returned an inconsistent task key');
+    }
     ai.correct = hasAnswer ? grading.correct : null;
     if (hasAnswer) ai.feedback = grading.feedback;
     ai.difficulty = nextDifficulty;
@@ -1329,7 +1403,7 @@ app.post('/api/ai/turn', authStudent, async (req, res) => {
     if (!ai.visualPrompt) {
       ai.visualPrompt = `One calm educational illustration for a school lesson about ${topic.title}, showing this situation: ${ai.task.slice(0, 320)}. No labels, no lettering, no answer.`;
     }
-    if (!ai.task) throw new Error('Gemini did not provide the next task');
+    if (!ai.task) throw new Error('Mistral did not provide the next task');
 
     const nextOutcomes = hasAnswer ? [...outcomes, ai.correct] : outcomes;
     const progress = masteryState(nextOutcomes);
@@ -1359,9 +1433,14 @@ app.post('/api/ai/turn', authStudent, async (req, res) => {
 });
 
 app.post('/api/ai/voice', authStudent, async (req, res) => {
-  const { topic } = req.body || {};
+  const { topicId } = req.body || {};
   const history = Array.isArray(req.body?.history) ? req.body.history : [];
   const lang = req.body?.lang === 'kk' ? 'kk' : 'ru';
+  const topicRow = (await pool.query('SELECT title, description, theory_cache, published FROM topics WHERE id=$1', [topicId])).rows[0];
+  if (!topicRow?.published) return res.status(404).json({ error: 'topic_not_found' });
+  const theory = topicRow.theory_cache?.[lang] || topicRow.theory_cache?.ru;
+  const lessonContext = theory ? [theory.intro, ...theory.pages.flatMap(page => [page.title, page.text, page.example, page.key])].filter(Boolean).join('\n').slice(0, 6500) : '';
+  const currentTask = String(req.body?.currentTask || '').slice(0, 900);
   const turns = history.slice(-12).flatMap((item) => {
     if (!item || typeof item.text !== 'string') return [];
     const role = item.role === 'student' || item.role === 'user' ? 'user'
@@ -1374,9 +1453,9 @@ app.post('/api/ai/voice', authStudent, async (req, res) => {
   }
   try {
     const reply = await mistralChat([
-        { role: 'system', content: `${SYSTEM_VOICE[lang]}\nКонтекст занятия: ${String(topic || 'учёба').slice(0, 200)}.` },
+        { role: 'system', content: `${SYSTEM_VOICE[lang]}\nТы сопровождаешь конкретный урок. Отвечай по теме и данным ниже; если ученик просит подсказку к текущей задаче, дай первый шаг и вопрос для размышления, не называя готовый вариант ответа. Если в материале нет нужного факта, объясни, что это общий ответ, и не выдумывай содержимое урока. Тема: ${String(topicRow.title).slice(0, 200)}. Описание: ${String(topicRow.description || '').slice(0, 800)}. Теория урока: ${lessonContext}. Текущая задача: ${currentTask}.` },
         ...turns,
-      ], 500);
+      ], 380);
     res.json({ reply });
   } catch (e) {
     console.error('Voice chat failed', e);

@@ -5,12 +5,13 @@
 <title>tasked — Панель учителя</title>
 <link rel="icon" href="/img/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#0b0c0e">
+<meta name="theme-color" content="#f3f5f7">
 <link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/corporate.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
-<script>try{document.documentElement.dataset.theme=localStorage.getItem('tasked_theme')==='light'?'light':'dark'}catch(e){document.documentElement.dataset.theme='dark'}</script>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('tasked_theme')==='dark'?'dark':'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
 </head>
 <body>
 
@@ -77,7 +78,7 @@
 
         <div class="card" style="cursor:default; margin-bottom:18px">
           <h3 style="font-size:15px;display:flex;gap:8px;align-items:center"><i data-icon="plus"></i><span data-i18n="newTopicT">Новая тема</span></h3>
-          <p class="muted" data-i18n="newTopicP">Название увидят ученики в каталоге. Категория помогает фильтровать.</p>
+          <p class="muted" data-i18n="newTopicP">Сначала создаётся черновик. Mistral подготовит общую теорию и первое задание; после просмотра ты опубликуешь урок.</p>
           <div class="create-grid" style="display:grid; grid-template-columns:1fr 2fr; gap:12px; margin-top:6px">
             <div>
               <label style="margin-top:8px" data-i18n="fTopicName">Название темы</label>
@@ -181,6 +182,26 @@
   </div>
 </div>
 
+<!-- shared lesson preview -->
+<div class="modal-bg" id="previewModal" role="dialog" aria-modal="true" aria-labelledby="previewTitle">
+  <div class="modal lesson-preview">
+    <div class="modal-head">
+      <div><p class="preview-eyebrow" data-i18n="previewLabel">ПРЕДПРОСМОТР УРОКА</p><h3 id="previewTitle">Тема</h3></div>
+      <button class="btn ghost small" onclick="closePreview()" data-i18n="close">Закрыть</button>
+    </div>
+    <div class="preview-content">
+      <p id="previewState" class="muted" role="status">Подготовка материала…</p>
+      <div id="previewTheory" class="preview-pages"></div>
+      <section id="previewTask" class="preview-task" hidden></section>
+      <p id="previewMessage" class="muted" role="status"></p>
+    </div>
+    <div class="preview-actions">
+      <button class="btn" id="previewRegenerate" onclick="regeneratePreview()" data-i18n="previewRegenerate">Сгенерировать заново</button>
+      <button class="btn primary" id="previewPublish" onclick="publishPreview()" disabled>Опубликовать урок</button>
+    </div>
+  </div>
+</div>
+
 <!-- topic settings modal -->
 <div class="modal-bg" id="topicModal">
   <div class="modal" style="width:520px">
@@ -279,7 +300,7 @@ function showTab(name, el) {
 
 let myTopics = [];
 async function loadMine() {
-  myTopics = await (await fetch('/api/topics')).json();
+  myTopics = await (await fetch('/api/teacher/topics')).json();
   renderTable(myTopics);
   document.getElementById('stTopics').textContent = myTopics.length;
   if (document.getElementById('bankTopic')) loadBankTopics();
@@ -291,14 +312,18 @@ function renderTable(list) {
   list.forEach(t => {
     const cat = (t.description.match(/^\[(.+?)\]/) || [])[1] || '—';
     const row = document.createElement('tr');
-    row.innerHTML = `<td><b></b></td><td>${cat}</td><td class="muted">${new Date(t.created_at).toLocaleDateString('ru')}</td>
-      <td><span class="status-pill">${tr('stPub')}</span></td>
-      <td><div class="row-actions"><button class="icon-btn open">${tr('actOpen')}</button>
+    row.innerHTML = `<td><b></b></td><td class="topic-category"></td><td class="muted">${new Date(t.created_at).toLocaleDateString('ru')}</td>
+      <td><span class="status-pill"></span></td>
+      <td><div class="row-actions"><button class="icon-btn open"></button>
           <button class="icon-btn cfg">${tr('actCfg')}</button>
           <button class="icon-btn linkbtn"><i data-icon="link"></i>${tr('actLink')}</button>
           <button class="icon-btn del">${tr('actDel')}</button></div></td>`;
     row.querySelector('b').textContent = t.title;
-    row.querySelector('.open').onclick = () => location.href = '/lesson.html?topic=' + t.id;
+    row.querySelector('.topic-category').textContent = cat;
+    row.querySelector('.open').textContent = window.i18n?.get?.() === 'kk' ? 'Алдын ала қарау' : 'Предпросмотр';
+    row.querySelector('.status-pill').textContent = t.published ? tr('stPub') : t.theory_status === 'ready' && t.task_status === 'ready' ? (window.i18n?.get?.() === 'kk' ? 'Тексеруге дайын' : 'Готово к проверке') : t.theory_status === 'failed' || t.task_status === 'failed' ? (window.i18n?.get?.() === 'kk' ? 'Қайта жасау керек' : 'Нужна повторная генерация') : (window.i18n?.get?.() === 'kk' ? 'Дайындалуда' : 'Подготовка');
+    row.querySelector('.linkbtn').hidden = !t.published;
+    row.querySelector('.open').onclick = () => openPreview(t.id);
     row.querySelector('.cfg').onclick = () => openTopicModal(t.id);
     row.querySelector('.linkbtn').onclick = (ev) => copyTopicLink(t.id, ev.currentTarget);
     row.querySelector('.del').onclick = () => delTopic(t.id);
@@ -312,10 +337,13 @@ async function createTopic() {
   if (!title) { document.getElementById('newTitle').focus(); return; }
   const cat = document.getElementById('newCat').value;
   const desc = (cat ? '[' + cat + '] ' : '') + document.getElementById('newDesc').value.trim();
-  await fetch('/api/topics', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, description: desc }) });
+  const response = await fetch('/api/topics', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, description: desc }) });
+  const created = await response.json();
+  if (!response.ok) { alert(created.error || 'Не удалось создать тему'); return; }
   document.getElementById('newTitle').value = '';
   document.getElementById('newDesc').value = '';
-  loadMine();
+  await loadMine();
+  openPreview(created.id);
 }
 async function delTopic(id) {
   if (!confirm(tr('delTopicQ'))) return;
@@ -416,7 +444,7 @@ function closeTopicModal() { const m = document.getElementById('topicModal'); m.
 async function saveTopic() {
   const cat = (myTopics.find(x => x.id === editId)?.description.match(/^\[(.+?)\]/) || [])[1];
   const desc = document.getElementById('etDesc').value.trim();
-  await fetch('/api/topics/' + editId, {
+  const response = await fetch('/api/topics/' + editId, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       title: document.getElementById('etTitle').value.trim(),
@@ -424,7 +452,15 @@ async function saveTopic() {
       theory_override: document.getElementById('etTheory').value.trim(),
     })
   });
-  closeTopicModal(); loadMine();
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    alert(error.error === 'preparation_in_progress' ? 'Дождитесь подготовки текущей версии урока и повторите сохранение.' : 'Не удалось сохранить изменения.');
+    return;
+  }
+  const updated = await response.json();
+  closeTopicModal();
+  await loadMine();
+  if (!updated.published) openPreview(editId);
 }
 
 // ---- task bank ----
@@ -547,12 +583,110 @@ async function loadClasses() {
   paintIcons(box);
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+let previewId = null, previewPoll = null, previewRun = 0;
+function previewText(ru, kk) { return window.i18n?.get?.() === 'kk' ? kk : ru; }
+function closePreview() {
+  previewRun++;
+  clearTimeout(previewPoll);
+  document.getElementById('previewModal').classList.remove('open');
+  document.getElementById('previewModal').style.display = 'none';
+  previewId = null;
+  loadMine();
+}
+function openPreview(id) {
+  previewId = id;
+  const topic = myTopics.find(t => t.id === id);
+  document.getElementById('previewTitle').textContent = topic?.title || 'Урок';
+  document.getElementById('previewTheory').replaceChildren();
+  document.getElementById('previewTask').hidden = true;
+  document.getElementById('previewMessage').textContent = '';
+  const modal = document.getElementById('previewModal');
+  modal.style.display = 'flex'; modal.classList.add('open');
+  previewRun++;
+  pollPreview(previewRun);
+}
+function previewParagraph(parent, text, className) {
+  const el = document.createElement('p');
+  if (className) el.className = className;
+  el.textContent = text || '';
+  parent.appendChild(el);
+}
+function renderPreview(data) {
+  const pages = document.getElementById('previewTheory');
+  const theory = data.theory?.[window.i18n?.get?.() || 'ru'] || data.theory?.ru;
+  pages.replaceChildren();
+  if (theory?.pages?.length) {
+    previewParagraph(pages, theory.intro, 'preview-intro');
+    theory.pages.forEach((page, i) => {
+      const card = document.createElement('article'); card.className = 'preview-page';
+      previewParagraph(card, `${previewText('ТЕОРИЯ', 'ТЕОРИЯ')} ${String(i + 1).padStart(2, '0')}`, 'preview-kicker');
+      const heading = document.createElement('h4'); heading.textContent = page.title || ''; card.appendChild(heading);
+      previewParagraph(card, page.text);
+      if (page.example) previewParagraph(card, `${previewText('Пример', 'Мысал')}: ${page.example}`, 'preview-example');
+      if (page.key) previewParagraph(card, page.key, 'preview-key');
+      pages.appendChild(card);
+    });
+  }
+  const task = data.firstTask?.[window.i18n?.get?.() || 'ru'] || data.firstTask?.ru;
+  const taskEl = document.getElementById('previewTask'); taskEl.replaceChildren();
+  taskEl.hidden = !task;
+  if (task) {
+    previewParagraph(taskEl, previewText('ПЕРВОЕ ОБЩЕЕ ЗАДАНИЕ · УРОВЕНЬ 3', 'АЛҒАШҚЫ ОРТАҚ ТАПСЫРМА · 3-ДЕҢГЕЙ'), 'preview-kicker');
+    const heading = document.createElement('h4'); heading.textContent = task.task; taskEl.appendChild(heading);
+    if (task.options?.length) task.options.forEach(option => previewParagraph(taskEl, option, 'preview-option'));
+    if (task.items?.length) task.items.forEach(item => previewParagraph(taskEl, item, 'preview-option'));
+    if (task.pairs?.length) task.pairs.forEach(pair => previewParagraph(taskEl, pair.left, 'preview-option'));
+    const answer = task.answerKey?.expected;
+    if (answer != null) previewParagraph(taskEl, `${previewText('Ключ', 'Дұрыс жауап')}: ${typeof answer === 'object' ? JSON.stringify(answer) : answer}`, 'preview-answer');
+  }
+  const ready = Boolean(theory?.pages?.length && task?.task && data.theoryStatus === 'ready' && data.taskStatus === 'ready');
+  document.getElementById('previewPublish').disabled = !ready || data.published;
+  document.getElementById('previewPublish').textContent = data.published ? previewText('Опубликовано', 'Жарияланды') : previewText('Опубликовать урок', 'Сабақты жариялау');
+  const failed = data.theoryStatus === 'failed' || data.taskStatus === 'failed';
+  document.getElementById('previewRegenerate').disabled = !ready && !failed;
+  document.getElementById('previewState').textContent = failed ? previewText('Подготовка прервалась. Запустите её снова.', 'Дайындау тоқтады. Қайта бастаңыз.')
+    : ready ? previewText('Теория и первое задание готовы. Проверьте материал и опубликуйте урок.', 'Теория мен алғашқы тапсырма дайын. Материалды тексеріп, сабақты жариялаңыз.')
+      : previewText(`Mistral готовит материал: теория — ${data.theoryStatus}, задание — ${data.taskStatus}.`, `Mistral материал дайындауда: теория — ${data.theoryStatus}, тапсырма — ${data.taskStatus}.`);
+  return ready || failed;
+}
+async function pollPreview(run) {
+  if (run !== previewRun || !previewId) return;
+  try {
+    const response = await fetch(`/api/teacher/topics/${previewId}/preview`, { cache: 'no-store' });
+    if (!response.ok) throw new Error('Не удалось загрузить предпросмотр');
+    const data = await response.json();
+    if (run !== previewRun) return;
+    const settled = renderPreview(data);
+    if (!settled) previewPoll = setTimeout(() => pollPreview(run), 2500);
+  } catch (error) { document.getElementById('previewState').textContent = error.message; }
+}
+async function regeneratePreview() {
+  if (!previewId) return;
+  document.getElementById('previewMessage').textContent = 'Запускаю подготовку заново…';
+  const response = await fetch(`/api/teacher/topics/${previewId}/regenerate`, { method: 'POST' });
+  if (!response.ok) { document.getElementById('previewMessage').textContent = 'Не удалось перезапустить генерацию.'; return; }
+  document.getElementById('previewTheory').replaceChildren();
+  document.getElementById('previewTask').hidden = true;
+  document.getElementById('previewPublish').disabled = true;
+  clearTimeout(previewPoll);
+  previewRun++; pollPreview(previewRun);
+}
+async function publishPreview() {
+  if (!previewId) return;
+  const response = await fetch(`/api/teacher/topics/${previewId}/publish`, { method: 'POST' });
+  if (!response.ok) { document.getElementById('previewMessage').textContent = 'Материал ещё не готов. Проверь статус подготовки.'; return; }
+  document.getElementById('previewMessage').textContent = 'Урок опубликован и доступен ученикам.';
+  document.getElementById('previewPublish').disabled = true;
+  document.getElementById('previewPublish').textContent = 'Опубликовано';
+  loadMine();
+}
 window.onLangChange = () => {
   if (!me) return;
   renderTable(myTopics); loadProgress();
   if (me.role === 'admin') loadAdmin();
   if (document.getElementById('tabBank').style.display !== 'none') loadBank();
   if (document.getElementById('tabClasses').style.display !== 'none') loadClasses();
+  if (previewId) { clearTimeout(previewPoll); previewRun++; pollPreview(previewRun); }
 };
 if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 checkAuth();

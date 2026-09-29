@@ -5,12 +5,13 @@
 <title>tasked — Каталог тем</title>
 <link rel="icon" href="/img/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#0b0c0e">
+<meta name="theme-color" content="#f3f5f7">
 <link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/corporate.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
-<script>try{document.documentElement.dataset.theme=localStorage.getItem('tasked_theme')==='light'?'light':'dark'}catch(e){document.documentElement.dataset.theme='dark'}</script>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('tasked_theme')==='dark'?'dark':'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
 </head>
 <body>
 <header class="topbar">
@@ -97,7 +98,7 @@
     <div style="padding:20px 22px">
       <p class="muted" id="authWhy" data-i18n="authWhy">Аккаунт нужен, чтобы сохранялся твой прогресс по темам.</p>
       <label for="authEmail" data-i18n="authEmail">Почта</label>
-      <input id="authEmail" type="email" data-i18n-ph="authEmailPh" placeholder="you@example.com" autocomplete="email" onkeydown="if(event.key==='Enter')sendEmailLink()">
+      <input id="authEmail" type="email" data-i18n-ph="authEmailPh" placeholder="you@example.com" autocomplete="email" onkeydown="if(event.key==='Enter')sendEmailCode()">
       <button class="btn primary" style="width:100%;margin-top:12px" id="emailGo" onclick="sendEmailCode()" data-i18n="authSendCode">Отправить код на почту</button>
       <div id="emailCodeRow" style="display:none;margin-top:12px">
         <label for="emailCode" data-i18n="authCode">Код из письма</label>
@@ -107,7 +108,7 @@
       <div style="display:flex;align-items:center;gap:12px;margin:15px 0;color:var(--muted);font-size:12px"><span style="height:1px;background:var(--line);flex:1"></span><span data-i18n="authOr">или</span><span style="height:1px;background:var(--line);flex:1"></span></div>
       <button class="btn" style="width:100%" onclick="signInGoogle()"><span aria-hidden="true" style="font-weight:800;margin-right:9px">G</span><span data-i18n="authGoogle">Продолжить с Google</span></button>
       <p id="authMsg" class="err" style="margin-top:10px;font-size:13px" aria-live="polite"></p>
-      <p class="muted" style="font-size:12px;margin-top:12px" data-i18n="authNoPassword">Пароль не нужен. Ссылка подтвердит, что почта принадлежит вам.</p>
+      <p class="muted" style="font-size:12px;margin-top:12px" data-i18n="authNoPassword">Пароль не нужен. Отправим одноразовый код на вашу почту.</p>
     </div>
   </div>
 </div>
