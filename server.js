@@ -838,7 +838,7 @@ app.get('/api/student/export.csv', authStudent, async (req, res) => {
 // ---------- Mistral AI (bilingual RU/KK) ----------
 // Primary: ministral-14b — proven fast and reliable for lessons. Magistral
 // models stay in the chain as fallback for when their quota allows.
-const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'mistral-small-latest';
+const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'ministral-14b-latest';
 
 async function mistralChat(messages, maxTokens = 900, json = false, timeoutMs = 60000) {
   if (!process.env.MISTRAL_API_KEY) throw new Error('MISTRAL_API_KEY is not configured');
