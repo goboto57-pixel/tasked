@@ -528,8 +528,11 @@ app.get('/api/topics/:id/theory', authStudent, async (req, res) => {
   const result = await pool.query('SELECT id, title, description, theory_override, theory_cache, theory_status, theory_version FROM topics WHERE id=$1', [req.params.id]);
   const topic = result.rows[0];
   if (!topic) return res.status(404).json({ error: 'topic_not_found' });
-  if (Number(topic.theory_version) < 2 && !['generating', 'failed'].includes(topic.theory_status)) generateAndCacheTopicTheory(topic).catch(error => console.error('Topic theory generation failed:', error.message));
-  if (!topic.theory_cache || Number(topic.theory_version) < 2) return res.status(topic.theory_status === 'failed' ? 503 : 202).json({ status: topic.theory_status });
+  if (Number(topic.theory_version) < 2) {
+    if (topic.theory_status !== 'generating') generateAndCacheTopicTheory(topic).catch(error => console.error('Topic theory generation failed:', error.message));
+    return res.status(202).json({ status: 'generating' });
+  }
+  if (!topic.theory_cache) return res.status(503).json({ status: topic.theory_status || 'failed' });
   res.set('Cache-Control', 'private, no-store').json({ status: 'ready', theory: topic.theory_cache });
 });
 
@@ -1129,7 +1132,11 @@ function formatGradingFeedback(grade, task, lang) {
     ? String(rawExpected)
     : Array.isArray(rawExpected) ? rawExpected.join(', ')
       : rawExpected && typeof rawExpected === 'object' ? Object.entries(rawExpected).map(([left, right]) => `${left} → ${right}`).join('; ') : '');
-  const explanation = grade.assessment || task.answerKey?.rationale || task.answerKey?.rubric || '';
+  let explanation = grade.assessment || task.answerKey?.rationale || task.answerKey?.rubric || '';
+  const contradictory = grade.correct
+    ? /(?:неверн|ошиб|неправильн|не соответствует|қате|дұрыс емес)/i
+    : /(?:верно|правильн|ответ соответствует|полностью вер|дұрыс|сәйкес келеді)/i;
+  if (contradictory.test(explanation)) explanation = task.answerKey?.rationale || task.answerKey?.rubric || '';
   if (grade.correct) return lang === 'kk'
     ? `Дұрыс. ${explanation || 'Жауабың тапсырманың шартына сәйкес келеді.'}`
     : `Верно. ${explanation || 'Твой ответ соответствует условию задания.'}`;

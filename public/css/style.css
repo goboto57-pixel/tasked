@@ -367,6 +367,8 @@ label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); 
 .theory-example { margin-top: 14px; padding: 13px 15px; border-left: 3px solid var(--line-strong); background: var(--card-2); border-radius: 0 10px 10px 0; }
 .theory-key { margin-top: 10px; color: var(--muted); font-weight: 700; }
 .theory-return { margin-top: 12px; }
+.theory-error-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 16px; }
+.theory-error-actions[hidden] { display: none; }
 .crumbs { font-size: 13.5px; color: var(--faint); margin-bottom: 12px; }
 .crumbs b { color: var(--ink); font-weight: 600; }
 .theory-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px 26px; }

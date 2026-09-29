@@ -44,6 +44,10 @@
         <img id="theoryVisualImg" alt="">
         <p class="visual-caption" id="theoryVisualCaption"></p>
       </div>
+      <div id="theoryErrorActions" class="theory-error-actions" hidden>
+        <button class="btn" id="theoryRetryBtn" onclick="retryTopicTheory()"><span data-i18n="retryTheory">Повторить подготовку</span></button>
+        <a class="btn ghost" id="theoryLoginBtn" href="/" hidden><span data-i18n="theoryLogin">Войти и вернуться к уроку</span></a>
+      </div>
       <div class="callout"><i data-icon="mic"></i><span data-i18n="voiceHint">Не понял тему? Нажми «Голосовой помощник» — спроси учителя, он ответит голосом.</span></div>
       <div class="btn-row">
         <button class="btn small" onclick="replayTheory()"><i data-icon="volume"></i><span data-i18n="speakBtn">Озвучить</span></button>
@@ -157,6 +161,7 @@ const $ = id => document.getElementById(id);
 let attemptNum = 0, lastAnswer = null, soundOn = true, lastTheory = '', lastTask = '', lessonDifficulty = 1;
 let curKind = 'short', turnPending = false;
 let theoryPages = [], theoryPageIndex = 0;
+let theoryLoadBusy = false;
 const chips = [];
 const visualState = {
   theory: { version: 0, controller: null, url: null },
@@ -376,7 +381,7 @@ async function loadTopic() {
     topics = await response.json();
   } catch (e) {
     $('topicTitle').textContent = tr('noConn');
-    $('theoryBody').textContent = tr('noConn');
+    $('theoryBody').textContent = location.protocol === 'file:' ? tr('theoryOpenFromServer') : tr('noConn');
     $('submitBtn').disabled = true;
     return;
   }
@@ -390,25 +395,65 @@ async function loadTopic() {
   $('crumbs').innerHTML = '';
   $('crumbs').append(Object.assign(document.createElement('b'), { textContent: 'Каталог' }), ' / ' + t.title);
   $('theoryPane').style.display = 'block'; $('taskPane').style.display = 'none'; $('lessonGrid').classList.remove('task-only');
+  await loadPreparedTheory();
+}
+async function loadPreparedTheory() {
+  if (theoryLoadBusy) return false;
+  theoryLoadBusy = true;
+  $('theoryErrorActions').hidden = true;
   $('theoryBody').textContent = tr('theoryPreparing');
+  $('theoryBody').classList.add('muted');
   let prepared = null;
   for (let attempt = 0; attempt < 60; attempt++) {
     try {
       const response = await fetch(`/api/topics/${encodeURIComponent(topicId)}/theory?lang=${curLang()}`);
-      const result = await response.json();
+      const result = await response.json().catch(() => ({}));
       if (response.ok && result.status === 'ready') { prepared = result.theory[curLang()] || result.theory.ru; break; }
-      if (!response.ok && response.status !== 202) throw new Error('theory unavailable');
-    } catch (e) { $('theoryBody').textContent = tr('theoryUnavailable'); return; }
+      if (response.status === 401 || response.status === 403) {
+        $('theoryBody').textContent = tr('theoryNeedsLogin');
+        $('theoryErrorActions').hidden = false;
+        $('theoryRetryBtn').hidden = true;
+        $('theoryLoginBtn').hidden = false;
+        $('theoryLoginBtn').href = `/?auth=required&next=${encodeURIComponent(location.pathname + location.search)}`;
+        theoryLoadBusy = false;
+        return false;
+      }
+      if (!response.ok && response.status !== 202) {
+        $('theoryBody').textContent = result.error === 'ai_error' || result.status === 'failed' ? tr('theoryGenerateFailed') : tr('theoryUnavailable');
+        $('theoryErrorActions').hidden = false;
+        $('theoryRetryBtn').hidden = false;
+        theoryLoadBusy = false;
+        return false;
+      }
+    } catch (e) {
+    $('theoryBody').textContent = location.protocol === 'file:' ? tr('theoryOpenFromServer') : tr('theoryUnavailable');
+      $('theoryErrorActions').hidden = false;
+      $('theoryRetryBtn').hidden = true;
+      theoryLoadBusy = false;
+      return false;
+    }
     await new Promise(resolve => setTimeout(resolve, 900));
   }
-  if (!prepared || !Array.isArray(prepared.pages) || prepared.pages.length < 2) { $('theoryBody').textContent = tr('theoryUnavailable'); return; }
-  theoryPages = prepared.pages.slice(0, 3).map((page, index) => ({
-    title: page.title || '', text: index === 0 ? `${prepared.intro || ''}\n\n` : '',
+  if (!prepared || !Array.isArray(prepared.pages) || prepared.pages.length < 3) {
+    $('theoryBody').textContent = tr('theoryUnavailable');
+    $('theoryErrorActions').hidden = false;
+    $('theoryRetryBtn').hidden = false;
+    theoryLoadBusy = false;
+    return false;
+  }
+  theoryPages = prepared.pages.slice(0, 3).map((page) => ({
+    title: page.title || '', text: '',
     detail: page.text || '', example: page.example || '', key: page.key || '', visualSpec: page.visualSpec,
   }));
   theoryPageIndex = 0;
   lastTheory = [prepared.intro, ...theoryPages.flatMap(page => [page.title, page.detail, page.example, page.key])].filter(Boolean).join('\n');
   renderTheoryWindow();
+  theoryLoadBusy = false;
+  return true;
+}
+async function retryTopicTheory() {
+  if (!navigator.onLine) { $('theoryBody').textContent = tr('noConn'); return; }
+  await loadPreparedTheory();
 }
 
 async function nextTurn(answer) {
