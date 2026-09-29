@@ -62,6 +62,7 @@ async function initDb() {
       theory_cache JSONB,
       theory_status TEXT NOT NULL DEFAULT 'pending',
       theory_version INT NOT NULL DEFAULT 0,
+      theory_started_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT now()
     );
     CREATE TABLE IF NOT EXISTS progress (
@@ -96,6 +97,7 @@ async function initDb() {
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS theory_cache JSONB`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS theory_status TEXT NOT NULL DEFAULT 'pending'`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS theory_version INT NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS theory_started_at TIMESTAMPTZ`);
   await pool.query(`UPDATE topics SET theory_cache=NULL, theory_status='pending' WHERE theory_version < 2 AND theory_cache IS NOT NULL`);
   await pool.query(`ALTER TABLE progress ADD COLUMN IF NOT EXISTS student_id INT REFERENCES students(id) ON DELETE CASCADE`);
   await pool.query(`ALTER TABLE progress ADD COLUMN IF NOT EXISTS completed BOOLEAN DEFAULT false`);
@@ -525,12 +527,19 @@ app.get('/api/topics', async (req, res) => {
 });
 
 app.get('/api/topics/:id/theory', authStudent, async (req, res) => {
-  const result = await pool.query('SELECT id, title, description, theory_override, theory_cache, theory_status, theory_version FROM topics WHERE id=$1', [req.params.id]);
+  const result = await pool.query('SELECT id, title, description, theory_override, theory_cache, theory_status, theory_version, theory_started_at FROM topics WHERE id=$1', [req.params.id]);
   const topic = result.rows[0];
   if (!topic) return res.status(404).json({ error: 'topic_not_found' });
   if (Number(topic.theory_version) < 2) {
-    if (topic.theory_status !== 'generating') generateAndCacheTopicTheory(topic).catch(error => console.error('Topic theory generation failed:', error.message));
-    return res.status(202).json({ status: 'generating' });
+    // A worker that died mid-generation leaves 'generating' behind forever —
+    // treat generations older than 5 minutes as stale and restart them.
+    const stale = topic.theory_status === 'generating' && topic.theory_started_at &&
+      (Date.now() - new Date(topic.theory_started_at).getTime() > 5 * 60 * 1000);
+    if (topic.theory_status !== 'generating' || stale) {
+      if (stale) await pool.query("UPDATE topics SET theory_status='pending' WHERE id=$1", [topic.id]).catch(() => {});
+      generateAndCacheTopicTheory(topic).catch(error => console.error('Topic theory generation failed:', error.message));
+    }
+    return res.status(202).json({ status: stale ? 'pending' : topic.theory_status });
   }
   if (!topic.theory_cache) return res.status(503).json({ status: topic.theory_status || 'failed' });
   res.set('Cache-Control', 'private, no-store').json({ status: 'ready', theory: topic.theory_cache });
@@ -781,7 +790,7 @@ app.get('/api/student/export.csv', authStudent, async (req, res) => {
 // proven ministral-14b if Magistral hits quota (paid tier) limits.
 const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'magistral-medium-latest';
 
-async function mistralChat(messages, maxTokens = 900, json = false) {
+async function mistralChat(messages, maxTokens = 900, json = false, timeoutMs = 60000) {
   if (!process.env.MISTRAL_API_KEY) throw new Error('MISTRAL_API_KEY is not configured');
   const systemInstruction = messages.find(m => m.role === 'system')?.content || '';
   const msgs = messages.filter(m => m.role !== 'system').map(m => ({
@@ -808,7 +817,7 @@ async function mistralChat(messages, maxTokens = 900, json = false) {
   let lastErr;
   for (const model of models) {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 45000);
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
       const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
         method: 'POST',
@@ -843,11 +852,49 @@ async function mistralChat(messages, maxTokens = 900, json = false) {
   throw lastErr;
 }
 
-async function mistralJson(messages, maxTokens = 900) {
-  const content = await mistralChat(messages, maxTokens, true);
-  const start = content.indexOf('{'), end = content.lastIndexOf('}');
+function sanitizeJsonText(text) {
+  // Models sometimes emit literal control chars inside strings (raw newlines
+  // etc.) which is invalid JSON — escape them so the payload still parses.
+  // Zero-width/format chars (U+200B–U+200D, U+FEFF) also break parsing, as do
+  // non-breaking and other unicode spaces outside of strings (U+00A0 etc.
+  // are NOT valid JSON whitespace) — normalize them to plain spaces.
+  return text
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, ' ')
+    .replace(/[\u0000-\u001F]/g, ch => {
+      if (ch === '\n') return '\\n';
+      if (ch === '\r') return '\\r';
+      if (ch === '\t') return '\\t';
+      return '';
+    });
+}
+// Text fields sometimes arrive as nested objects ({title,text}) instead of
+// plain strings — unwrap them instead of producing "[object Object]".
+function jstr(value, max = 500) {
+  if (typeof value === 'string') return value.trim().slice(0, max);
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    for (const k of ['text', 'title', 'value', 'content', 'key']) {
+      if (typeof value[k] === 'string' && value[k].trim()) return value[k].trim().slice(0, max);
+    }
+  }
+  return '';
+}
+async function mistralJson(messages, maxTokens = 900, timeoutMs = 60000) {
+  const content = await mistralChat(messages, maxTokens, true, timeoutMs);
+  // Start at the first '{"' (guards against stray/duplicated opening braces).
+  let start = content.search(/\{\s*"/);
+  if (start < 0) start = content.indexOf('{');
+  const end = content.lastIndexOf('}');
   if (start < 0 || end <= start) throw new Error('Mistral returned invalid JSON');
-  return JSON.parse(content.slice(start, end + 1));
+  const raw = content.slice(start, end + 1);
+  try { return JSON.parse(raw); }
+  catch (e1) {
+    try { return JSON.parse(sanitizeJsonText(raw)); }
+    catch (e2) {
+      const snippet = raw.slice(0, 200).replace(/\s+/g, ' ');
+      throw new Error(`Mistral returned invalid JSON (${e2.message}). Head: ${snippet}`);
+    }
+  }
 }
 
 const theoryJobs = new Map();
@@ -857,22 +904,33 @@ function generateAndCacheTopicTheory(topic) {
   theoryJobs.set(topic.id, job);
   return job;
 }
+// Models don't always return the exact requested shape — sometimes the
+// payload arrives nested (e.g. {response:{status,data:{ru,...}}}). Unwrap it.
+function findTheoryPayload(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+  if (obj.ru || obj.kk) return obj;
+  for (const v of Object.values(obj)) {
+    if (v && typeof v === 'object' && !Array.isArray(v) && (v.ru || v.kk)) return v;
+  }
+  return null;
+}
 async function generateTopicTheoryJob(topic) {
-  await pool.query("UPDATE topics SET theory_status='generating' WHERE id=$1", [topic.id]);
+  await pool.query("UPDATE topics SET theory_status='generating', theory_started_at=now() WHERE id=$1", [topic.id]);
   try {
     const theory = await mistralJson([
-      { role: 'system', content: 'Ты — автор содержательных школьных мини-уроков, а не генератор конспектов. Верни JSON на русском и казахском языках. В каждом языке: intro и ровно 3 последовательные pages. Строй обучение так: 1) что это за явление/идея и зачем она нужна; 2) как рассуждать или применять её — подробно разобранный пример по шагам; 3) перенос в новый контекст, границы применения и типичная ошибка с её исправлением. На каждой странице: title, text до 750 знаков с точными понятиями и связью причин/следствий, example с реальным разбором или применением, key как короткий вывод, и visualSpec {kind: sequence|cycle|compare|bars|concept, title, items:[{label,value}]} на 2–5 пунктов. Не подменяй объяснение лозунгами и определениями в одну строку. Используй конкретику именно этой темы; для формальных тем проверь обозначения и расчёт, для ИИ различай методы, данные, обучение и вывод. Не выдумывай факты. Материал учителя учитывай в первую очередь. Схемы строятся локально из visualSpec, внешние изображения не запрашивай. JSON: {"ru":{"intro":"","pages":[{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"concept","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"sequence","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"compare","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}}]},"kk":{"intro":"","pages":[{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"concept","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"sequence","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"compare","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}}]}}' },
+      { role: 'system', content: 'Ты — автор содержательных школьных мини-уроков, а не генератор конспектов. Верни JSON на русском и казахском языках. В каждом языке: intro — ОБЫЧНАЯ СТРОКА до 220 знаков (не объект) — и ровно 3 последовательные pages. Строй обучение так: 1) что это за явление/идея и зачем она нужна; 2) как рассуждать или применять её — подробно разобранный пример по шагам; 3) перенос в новый контекст, границы применения и типичная ошибка с её исправлением. На каждой странице: title, text до 750 знаков с точными понятиями и связью причин/следствий, example с реальным разбором или применением, key как короткий вывод, и visualSpec {kind: sequence|cycle|compare|bars|concept, title, items:[{label,value}]} на 2–5 пунктов. Не подменяй объяснение лозунгами и определениями в одну строку. Используй конкретику именно этой темы; для формальных тем проверь обозначения и расчёт, для ИИ различай методы, данные, обучение и вывод. Не выдумывай факты. Материал учителя учитывай в первую очередь. Схемы строятся локально из visualSpec, внешние изображения не запрашивай. JSON: {"ru":{"intro":"","pages":[{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"concept","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"sequence","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"compare","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}}]},"kk":{"intro":"","pages":[{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"concept","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"sequence","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"compare","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}}]}}' },
       { role: 'user', content: `Тема: ${topic.title}\nОписание: ${topic.description || ''}\nМатериал учителя: ${topic.theory_override || 'не указан'}` },
-    ], 2500);
+    ], 4500, 300000);
+    const root = findTheoryPayload(theory) || {};
     const clean = {};
     for (const lang of ['ru', 'kk']) {
-      const version = theory[lang] || theory.ru;
+      const version = root[lang] || root.ru;
       clean[lang] = {
-        intro: String(version?.intro || '').slice(0, 260),
+        intro: jstr(version?.intro, 260),
         pages: (Array.isArray(version?.pages) ? version.pages : []).slice(0, 3).map(page => ({
-          title: String(page?.title || '').slice(0, 100), text: String(page?.text || '').slice(0, 850),
-          example: String(page?.example || '').slice(0, 400), key: String(page?.key || '').slice(0, 240),
-          visualSpec: cleanVisualSpec(page?.visualSpec) || { kind: 'concept', title: String(page?.title || '').slice(0, 100), items: [{ label: String(page?.title || 'Тема').slice(0, 60), value: 'идея' }, { label: 'Пример', value: String(page?.key || page?.text || '').slice(0, 60) }] },
+          title: jstr(page?.title, 100), text: jstr(page?.text, 850),
+          example: jstr(page?.example, 400), key: jstr(page?.key, 240),
+          visualSpec: cleanVisualSpec(page?.visualSpec) || { kind: 'concept', title: jstr(page?.title, 100), items: [{ label: jstr(page?.title, 60) || 'Тема', value: 'идея' }, { label: 'Пример', value: jstr(page?.key || page?.text, 60) }] },
         })),
       };
       if (clean[lang].pages.length < 3 || !clean[lang].intro) throw new Error(`Incomplete ${lang} theory`);
@@ -1025,7 +1083,7 @@ function cleanVisualSpec(input) {
 }
 function normalizeLessonTurn(value, firstTurn) {
   const ai = value && typeof value === 'object' ? value : {};
-  const text = (input, max) => typeof input === 'string' ? input.trim().slice(0, max) : '';
+  const text = (input, max) => jstr(input, max);
   const legacyType = { order: 'ordering', match: 'matching', short: 'short_answer' };
   let taskType = TASK_FORMATS.includes(ai.taskType) ? ai.taskType : legacyType[ai.taskType] || 'short_answer';
   const options = Array.isArray(ai.options) ? ai.options.map(x => text(x, 180)).filter(Boolean).slice(0, 6) : [];
