@@ -804,37 +804,45 @@ async function geminiChat(messages, maxTokens = 900, json = false) {
     contents,
     generationConfig: configFor(model),
   });
-  const models = [GEMINI_MODEL, process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash']
-    .filter((m, i, a) => m && a.indexOf(m) === i);
+  // Free tier gives each model its own tiny daily quota, so fail over across
+  // models instead of hammering one. 429 (quota) moves on immediately —
+  // retrying the same model is pointless until reset.
+  const fallbackChain = [
+    process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash',
+    'gemini-2.5-flash', 'gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-2.5-flash-lite',
+  ];
+  const models = [GEMINI_MODEL, ...fallbackChain].filter((m, i, a) => m && a.indexOf(m) === i);
   let lastErr;
   for (const model of models) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      if (attempt) await new Promise(r => setTimeout(r, 1500 * attempt));
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 45000);
-      try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
-          body: JSON.stringify(bodyFor(model)),
-          signal: ctrl.signal,
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          const detail = payload.error?.message || `Gemini API ${response.status}`;
-          lastErr = new Error(detail.slice(0, 240));
-          // retry same model, then fail over to the next one
-          if (response.status !== 503 && response.status !== 429) throw lastErr;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 45000);
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
+        body: JSON.stringify(bodyFor(model)),
+        signal: ctrl.signal,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = payload.error?.message || `Gemini API ${response.status}`;
+        lastErr = new Error(detail.slice(0, 240));
+        // 503 (overload): brief pause, then try the next model in the chain.
+        // 429 (quota): never refills in time, move on immediately.
+        if (response.status === 503) {
+          await new Promise(r => setTimeout(r, 3000));
           continue;
         }
-        const text = payload.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('').trim();
-        if (!text) { lastErr = new Error('Gemini returned an empty response'); continue; }
-        return text;
-      } catch (e) {
-        if (e.name === 'AbortError') { lastErr = new Error('Gemini timeout'); break; }
-        lastErr = e;
-      } finally { clearTimeout(timer); }
-    }
+        if (response.status === 429) continue;
+        throw lastErr;
+      }
+      const text = payload.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('').trim();
+      if (!text) { lastErr = new Error('Gemini returned an empty response'); continue; }
+      return text;
+    } catch (e) {
+      if (e.name === 'AbortError') { lastErr = new Error('Gemini timeout'); }
+      else lastErr = e;
+    } finally { clearTimeout(timer); }
   }
   throw lastErr;
 }
