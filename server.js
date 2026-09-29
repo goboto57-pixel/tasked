@@ -69,6 +69,8 @@ async function initDb() {
       theory_started_at TIMESTAMPTZ,
       images_status TEXT NOT NULL DEFAULT 'pending',
       images_started_at TIMESTAMPTZ,
+      theory_error TEXT,
+      task_error TEXT,
       created_at TIMESTAMPTZ DEFAULT now()
     );
     CREATE TABLE IF NOT EXISTS topic_theory_images (
@@ -117,6 +119,8 @@ async function initDb() {
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS published BOOLEAN NOT NULL DEFAULT true`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS images_status TEXT NOT NULL DEFAULT 'pending'`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS images_started_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS theory_error TEXT`);
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS task_error TEXT`);
   await pool.query(`UPDATE topics SET theory_cache=NULL, theory_status='pending' WHERE theory_version < 2 AND theory_cache IS NOT NULL`);
   await pool.query(`ALTER TABLE progress ADD COLUMN IF NOT EXISTS student_id INT REFERENCES students(id) ON DELETE CASCADE`);
   await pool.query(`ALTER TABLE progress ADD COLUMN IF NOT EXISTS completed BOOLEAN DEFAULT false`);
@@ -565,6 +569,7 @@ app.get('/api/teacher/topics/:id/preview', authTeacher, async (req, res) => {
   const imageRows = await pool.query('SELECT page_index FROM topic_theory_images WHERE topic_id=$1 ORDER BY page_index', [topic.id]);
   res.set('Cache-Control', 'no-store').json({ id: topic.id, title: topic.title, description: topic.description,
     published: topic.published, theoryStatus: topic.theory_status, taskStatus: topic.task_status, imagesStatus: topic.images_status,
+    theoryError: topic.theory_error, taskError: topic.task_error,
     imagePages: imageRows.rows.map(row => row.page_index),
     theory: topic.theory_cache, firstTask: topic.prepared_task });
 });
@@ -583,8 +588,19 @@ app.post('/api/teacher/topics/:id/regenerate', authTeacher, async (req, res) => 
   const where = req.user.role === 'admin' ? 'id=$1' : 'id=$1 AND teacher_id=$2';
   const params = req.user.role === 'admin' ? [req.params.id] : [req.params.id, req.user.id];
   if (theoryJobs.has(Number(req.params.id)) || firstTaskJobs.has(Number(req.params.id)) || theoryImageJobs.has(Number(req.params.id))) return res.status(409).json({ error: 'preparation_in_progress' });
-  const r = await pool.query(`UPDATE topics SET theory_cache=NULL, theory_status='pending', theory_version=0, prepared_task=NULL, task_status='pending', images_status='pending', published=false WHERE ${where} RETURNING *`, params);
-  if (!r.rows[0]) return res.status(404).json({ error: 'topic_not_found' });
+  const current = (await pool.query(`SELECT * FROM topics WHERE ${where}`, params)).rows[0];
+  if (!current) return res.status(404).json({ error: 'topic_not_found' });
+  if (current.theory_status === 'failed' || current.task_status === 'failed') {
+    const r = await pool.query(`UPDATE topics SET
+      theory_status=CASE WHEN theory_status='failed' THEN 'pending' ELSE theory_status END,
+      theory_error=NULL,
+      task_status=CASE WHEN task_status='failed' THEN 'pending' ELSE task_status END,
+      task_error=NULL
+      WHERE ${where} RETURNING *`, params);
+    startTopicPreparation(r.rows[0]);
+    return res.status(202).json({ status: 'preparing' });
+  }
+  const r = await pool.query(`UPDATE topics SET theory_cache=NULL, theory_status='pending', theory_error=NULL, theory_version=0, prepared_task=NULL, task_status='pending', task_error=NULL, images_status='pending', published=false WHERE ${where} RETURNING *`, params);
   await pool.query('DELETE FROM topic_theory_images WHERE topic_id=$1', [req.params.id]);
   startTopicPreparation(r.rows[0]);
   res.status(202).json({ status: 'preparing' });
@@ -597,7 +613,6 @@ app.post('/api/teacher/topics/:id/regenerate-images', authTeacher, async (req, r
   if (theoryImageJobs.has(Number(req.params.id))) return res.status(409).json({ error: 'preparation_in_progress' });
   const r = await pool.query(`UPDATE topics SET images_status='pending' WHERE ${where} AND theory_cache IS NOT NULL RETURNING *`, params);
   if (!r.rows[0]) return res.status(404).json({ error: 'topic_or_theory_not_found' });
-  await pool.query('DELETE FROM topic_theory_images WHERE topic_id=$1', [req.params.id]);
   generateAndCacheTheoryImages(r.rows[0]).catch(error => console.error('Theory image regeneration failed:', error.message));
   res.status(202).json({ status: 'preparing_images' });
 });
@@ -667,7 +682,7 @@ app.patch('/api/topics/:id', authTeacher, async (req, res) => {
       req.params.id,
     ]);
   if (r.rows[0].title !== t.title || r.rows[0].description !== t.description || r.rows[0].theory_override !== t.theory_override) {
-    const refreshed = await pool.query("UPDATE topics SET theory_cache=NULL, theory_status='pending', theory_version=0, prepared_task=NULL, task_status='pending', images_status='pending', published=false WHERE id=$1 RETURNING *", [req.params.id]);
+    const refreshed = await pool.query("UPDATE topics SET theory_cache=NULL, theory_status='pending', theory_error=NULL, theory_version=0, prepared_task=NULL, task_status='pending', task_error=NULL, images_status='pending', published=false WHERE id=$1 RETURNING *", [req.params.id]);
     await pool.query('DELETE FROM topic_theory_images WHERE topic_id=$1', [req.params.id]);
     startTopicPreparation(refreshed.rows[0]);
     return res.json(refreshed.rows[0]);
@@ -949,11 +964,12 @@ async function aiChat(messages, maxTokens = 900, json = false, timeoutMs = 60000
         throw lastErr;
       }
       const text = payload.choices?.[0]?.message?.content?.trim();
-      if (!text) { lastErr = new Error('OpenAI returned an empty response'); continue; }
+      if (payload.choices?.[0]?.finish_reason === 'length') throw new Error('OpenAI response exceeded output token limit');
+      if (!text) throw new Error('OpenAI returned an empty response');
       return text;
     } catch (e) {
-      if (e.name === 'AbortError') { lastErr = new Error('OpenAI timeout'); }
-      else lastErr = e;
+      if (e.name === 'AbortError') throw new Error('OpenAI timeout');
+      throw e;
     } finally { clearTimeout(timer); }
   }
   throw lastErr;
@@ -1007,6 +1023,15 @@ async function aiJson(messages, maxTokens = 900, timeoutMs = 60000) {
 const theoryJobs = new Map();
 const firstTaskJobs = new Map();
 const theoryImageJobs = new Map();
+function preparationError(error) {
+  const message = String(error?.message || 'Unknown error');
+  if (/insufficient_quota|billing|payment|quota/i.test(message)) return 'Недостаточно средств или квоты OpenAI API.';
+  if (/rate.limit|too many requests|429/i.test(message)) return 'Превышен лимит запросов OpenAI API. Повторите позже.';
+  if (/model.*(not found|not available|access)|does not exist/i.test(message)) return 'У ключа нет доступа к выбранной модели OpenAI.';
+  if (/timeout|abort/i.test(message)) return 'Время ожидания ответа OpenAI истекло.';
+  if (/token limit|invalid JSON|Incomplete|inconsistent|empty response/i.test(message)) return 'ИИ вернул неполный материал. Повторите подготовку.';
+  return 'Ошибка подготовки. Подробности записаны в журнале сервера.';
+}
 function startTopicPreparation(topic) {
   const staleTheory = topic.theory_status === 'generating' && topic.theory_started_at && Date.now() - new Date(topic.theory_started_at).getTime() > 5 * 60_000;
   const staleTask = topic.task_status === 'generating' && topic.task_started_at && Date.now() - new Date(topic.task_started_at).getTime() > 5 * 60_000;
@@ -1018,7 +1043,7 @@ function startTopicPreparation(topic) {
   if (!topic.prepared_task && topic.task_status === 'pending') {
     generateAndCacheFirstTask(topic).catch(error => console.error('First task generation failed:', error.message));
   }
-  if (topic.theory_cache && topic.images_status === 'pending') {
+  if (topic.theory_cache && topic.prepared_task && topic.theory_status === 'ready' && topic.task_status === 'ready' && topic.images_status === 'pending') {
     generateAndCacheTheoryImages(topic).catch(error => console.error('Theory image generation failed:', error.message));
   }
 }
@@ -1034,7 +1059,10 @@ async function generateTheoryImagesJob(topic) {
     if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is not configured');
     const pages = topic.theory_cache?.ru?.pages || [];
     if (pages.length !== 3) throw new Error('Theory pages are not ready for images');
+    const existing = await pool.query('SELECT page_index FROM topic_theory_images WHERE topic_id=$1', [topic.id]);
+    const completed = new Set(existing.rows.map(row => Number(row.page_index)));
     for (let index = 0; index < 3; index++) {
+      if (completed.has(index)) continue;
       const page = pages[index];
       const prompt = `Create one realistic editorial educational photograph for a school lesson. Topic: ${String(topic.title).slice(0, 180)}. This page: ${String(page.title).slice(0, 100)}. Core idea: ${String(page.text).slice(0, 500)}. Worked example or application: ${String(page.example).slice(0, 320)}. Show a concrete scene, object, experiment, or real-world application that helps a student understand this exact idea. Natural classroom or documentary photography, accurate physical details, calm corporate palette, clear composition, no people facing camera unless necessary. No text, letters, equations, logos, watermarks, neon, futuristic visual effects, or answer to a quiz. If the concept is abstract, photograph a truthful real-world analogy rather than inventing scientific equipment.`;
       const response = await fetch('https://api.openai.com/v1/images/generations', {
@@ -1066,13 +1094,13 @@ function generateAndCacheFirstTask(topic) {
   return job;
 }
 async function generateFirstTaskJob(topic) {
-  await pool.query("UPDATE topics SET task_status='generating', task_started_at=now() WHERE id=$1", [topic.id]);
+  await pool.query("UPDATE topics SET task_status='generating', task_error=NULL, task_started_at=now() WHERE id=$1", [topic.id]);
   try {
     const requestedType = ['scenario_choice', 'evidence_choice', 'multiple_select', 'ordering', 'categorize'][topic.id % 5];
     const output = await aiJson([
       { role: 'system', content: `Ты проектируешь диагностическое задание для школьного интерактивного урока. Верни JSON {"ru":{...},"kk":{...}}: одно и то же содержательное задание на русском и казахском. Формат ${requestedType}. Уровень 3 из 5: нужна работа с ситуацией, данными или причинной связью, а не повторение определения. Для каждого языка обязательны task, taskType, options (для выбора), items (для порядка), pairs (для категорий), visualSpec {kind:"concept|sequence|compare|bars",title,items:[{label,value}]}, visualCaption и answerKey {expected,accepted:[],rubric,rationale}. Для выбора answerKey.expected — точный текст верного варианта; для multiple_select — массив точных текстов; для ordering — массив всех items в правильной последовательности; для categorize — объект соответствий left:right. Сделай правдоподобные неверные варианты, однозначное условие и краткое объяснение решения. Не раскрывай ответ в тексте задания или схеме. Если формат не подходит к предмету, используй scenario_choice. Только валидный JSON.` },
       { role: 'user', content: `Тема: ${String(topic.title).slice(0, 200)}\nОписание и программа: ${String(topic.description || '').slice(0, 1500)}\nМатериал учителя: ${String(topic.theory_override || '').slice(0, 2500)}` },
-    ], 2400, 90000);
+    ], 4000, 90000);
     const root = findTheoryPayload(output) || output;
     const clean = {};
     for (const lang of ['ru', 'kk']) {
@@ -1082,9 +1110,11 @@ async function generateFirstTaskJob(topic) {
       clean[lang].feedback = '';
       if (!validPreparedTask(clean[lang])) throw new Error(`Incomplete or inconsistent ${lang} first task`);
     }
-    await pool.query("UPDATE topics SET prepared_task=$1::jsonb, task_status='ready' WHERE id=$2", [JSON.stringify(clean), topic.id]);
+    await pool.query("UPDATE topics SET prepared_task=$1::jsonb, task_status='ready', task_error=NULL WHERE id=$2", [JSON.stringify(clean), topic.id]);
+    const refreshed = (await pool.query('SELECT * FROM topics WHERE id=$1', [topic.id])).rows[0];
+    if (refreshed) startTopicPreparation(refreshed);
   } catch (error) {
-    await pool.query("UPDATE topics SET task_status='failed' WHERE id=$1", [topic.id]).catch(() => {});
+    await pool.query("UPDATE topics SET task_status='failed', task_error=$2 WHERE id=$1", [topic.id, preparationError(error)]).catch(() => {});
     throw error;
   }
 }
@@ -1119,7 +1149,7 @@ function findTheoryPayload(obj) {
   return null;
 }
 async function generateTopicTheoryJob(topic) {
-  await pool.query("UPDATE topics SET theory_status='generating', theory_started_at=now() WHERE id=$1", [topic.id]);
+  await pool.query("UPDATE topics SET theory_status='generating', theory_error=NULL, theory_started_at=now() WHERE id=$1", [topic.id]);
   try {
     const theory = await aiJson([
       { role: 'system', content: 'Ты — автор содержательных школьных мини-уроков, а не генератор конспектов. Верни JSON на русском и казахском языках. В каждом языке: intro — ОБЫЧНАЯ СТРОКА до 220 знаков (не объект) — и ровно 3 последовательные pages. Строй обучение так: 1) что это за явление/идея и зачем она нужна; 2) как рассуждать или применять её — подробно разобранный пример по шагам; 3) перенос в новый контекст, границы применения и типичная ошибка с её исправлением. На каждой странице: title, text до 750 знаков с точными понятиями и связью причин/следствий, example с реальным разбором или применением, key как короткий вывод, и visualSpec {kind: sequence|cycle|compare|bars|concept, title, items:[{label,value}]} на 2–5 пунктов. Не подменяй объяснение лозунгами и определениями в одну строку. Используй конкретику именно этой темы; для формальных тем проверь обозначения и расчёт, для ИИ различай методы, данные, обучение и вывод. Не выдумывай факты. Материал учителя учитывай в первую очередь. Схемы строятся локально из visualSpec, внешние изображения не запрашивай. JSON: {"ru":{"intro":"","pages":[{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"concept","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"sequence","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"compare","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}}]},"kk":{"intro":"","pages":[{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"concept","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"sequence","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}},{"title":"","text":"","example":"","key":"","visualSpec":{"kind":"compare","title":"","items":[{"label":"","value":""},{"label":"","value":""}]}}]}}' },
@@ -1139,10 +1169,11 @@ async function generateTopicTheoryJob(topic) {
       };
       if (clean[lang].pages.length < 3 || !clean[lang].intro) throw new Error(`Incomplete ${lang} theory`);
     }
-    await pool.query("UPDATE topics SET theory_cache=$1::jsonb, theory_status='ready', theory_version=2, images_status='pending' WHERE id=$2", [JSON.stringify(clean), topic.id]);
-    generateAndCacheTheoryImages({ ...topic, theory_cache: clean }).catch(error => console.error('Theory image generation failed:', error.message));
+    await pool.query("UPDATE topics SET theory_cache=$1::jsonb, theory_status='ready', theory_error=NULL, theory_version=2, images_status='pending' WHERE id=$2", [JSON.stringify(clean), topic.id]);
+    const refreshed = (await pool.query('SELECT * FROM topics WHERE id=$1', [topic.id])).rows[0];
+    if (refreshed) startTopicPreparation(refreshed);
   } catch (error) {
-    await pool.query("UPDATE topics SET theory_status='failed' WHERE id=$1", [topic.id]).catch(() => {});
+    await pool.query("UPDATE topics SET theory_status='failed', theory_error=$2 WHERE id=$1", [topic.id, preparationError(error)]).catch(() => {});
     throw error;
   }
 }
