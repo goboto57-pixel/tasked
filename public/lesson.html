@@ -59,9 +59,9 @@
         <button class="btn small ghost" onclick="window.print()"><i data-icon="printer"></i><span data-i18n="printBtn">Печать</span></button>
       </div>
       <div class="theory-navigation">
-        <button id="theoryPrev" class="btn" onclick="moveTheory(-1)" disabled>Назад</button>
+        <button id="theoryPrev" class="btn" onclick="moveTheory(-1)" disabled data-i18n="backBtn">Назад</button>
         <span class="muted" id="theoryPageLabel">Окно 1 из 3</span>
-        <button id="theoryNext" class="btn primary" onclick="moveTheory(1)">Следующее окно</button>
+        <button id="theoryNext" class="btn primary" onclick="moveTheory(1)" data-i18n="nextTheoryWindow">Следующее окно</button>
       </div>
     </div>
     </section>
@@ -103,7 +103,7 @@
           <div class="track"><div class="fill" id="streakFill"></div></div>
         </div>
       </div>
-      <button class="btn small theory-return" onclick="returnToTheory()">Вернуться к теории</button>
+      <button class="btn small theory-return" onclick="returnToTheory()" data-i18n="returnToTheory">Вернуться к теории</button>
     </section>
   </div>
 </div>
@@ -496,6 +496,8 @@ async function nextTurn(answer) {
       lastTask = data.task;
       renderOptions(data);
       showFreeVisual('task', data.visualSpec, data.visualCaption);
+      const tw = $('taskWrap');
+      tw.style.animation = 'none'; void tw.offsetWidth; tw.style.animation = '';
       $('stTaskN').textContent = '#' + attemptNum;
       $('taskNum').textContent = tr('taskN') + attemptNum;
       $('taskText').textContent = data.task;
@@ -771,6 +773,9 @@ window.onLangChange = () => {
   paintDifficulty();
   if (attemptNum) $('taskNum').textContent = tr('taskN') + attemptNum;
   renderChips();
+  if (theoryPages.length && $('theoryPane').style.display !== 'none') renderTheoryWindow();
+  const tf = $('taskFormat');
+  if (tf && tf.textContent) tf.textContent = tr('format_' + curKind);
   if (window.i18n) i18n.apply(curLang());
 };
 if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
