@@ -13,7 +13,7 @@ services:
       - key: MISTRAL_API_KEY
         sync: false
       - key: MISTRAL_MODEL
-        value: magistral-medium-latest
+        value: ministral-14b-latest
       - key: MISTRAL_FALLBACK_MODEL
         value: magistral-small-latest
       - key: GEMINI_IMAGE_MODEL

@@ -785,10 +785,9 @@ app.get('/api/student/export.csv', authStudent, async (req, res) => {
 });
 
 // ---------- Mistral AI (bilingual RU/KK) ----------
-// Primary: Magistral Medium (frontier reasoning, most capable outside the
-// Large/Medium/Small families). Falls back to Magistral Small, then to the
-// proven ministral-14b if Magistral hits quota (paid tier) limits.
-const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'magistral-medium-latest';
+// Primary: ministral-14b — proven fast and reliable for lessons. Magistral
+// models stay in the chain as fallback for when their quota allows.
+const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'ministral-14b-latest';
 
 async function mistralChat(messages, maxTokens = 900, json = false, timeoutMs = 60000) {
   if (!process.env.MISTRAL_API_KEY) throw new Error('MISTRAL_API_KEY is not configured');
@@ -811,7 +810,7 @@ async function mistralChat(messages, maxTokens = 900, json = false, timeoutMs = 
   // Fallback chain for Mistral models
   const fallbackChain = [
     process.env.MISTRAL_FALLBACK_MODEL || 'magistral-small-latest',
-    'magistral-small-latest', 'ministral-14b-latest',
+    'magistral-small-latest', 'magistral-medium-latest',
   ];
   const models = [MISTRAL_MODEL, ...fallbackChain].filter((m, i, a) => m && a.indexOf(m) === i);
   let lastErr;
